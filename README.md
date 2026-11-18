@@ -71,7 +71,7 @@ tests/       engine, api + AI contract, web (axe), e2e (Playwright)
 - Model output is validated with Zod: unknown template id, more than two sentences, sentences over 160 characters, **any digit**, `<`/`>` or links → rejected and the verified template is used. Digits are banned so that every number on screen comes from code.
 - Model text is rendered as plain React text (no `dangerouslySetInnerHTML` anywhere).
 - Without a key, or on timeout (6 s), quota/provider error, invalid output or an exhausted budget, the app uses the hand-written explanation and shows **"Offline explanations"**. Fallback text is never presented as a live model response.
-- Model: `GEMINI_MODEL` env var, default `gemini-2.5-flash`, via the official `@google/genai` SDK with structured JSON output, a 256-token output cap and thinking disabled.
+- Model: `GEMINI_MODEL` env var, default `gemini-3.5-flash-lite`, via the official `@google/genai` SDK with structured JSON output, a 256-token output cap and thinking disabled.
 
 ## 6. Maths assumptions and progression heuristics
 

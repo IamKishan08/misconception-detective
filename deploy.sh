@@ -23,7 +23,7 @@ gcloud run deploy "$SERVICE" \
   --memory 512Mi --cpu 1 \
   --min-instances 0 --max-instances 3 \
   --concurrency 80 --timeout 30 \
-  --set-env-vars "GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}" \
+  --set-env-vars "GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.5-flash-lite}" \
   "${SECRET_FLAGS[@]}"
 
 gcloud run services describe "$SERVICE" --region "$REGION" --format 'value(status.url)'
