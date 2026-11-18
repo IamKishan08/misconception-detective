@@ -11,7 +11,8 @@ const explanationSchema = z.object({
   sentences: z.array(z.string()).max(2),
 });
 const interpretationSchema = z.object({ source: z.enum(['gemini', 'fallback']), family: z.enum(['F1', 'F2', 'F3', 'none']) });
-const statusSchema = z.object({ explanations: z.enum(['live', 'offline']) });
+const statusSchema = z.object({ explanations: z.enum(['offline', 'untested', 'live', 'failing']) });
+export type AiHealth = z.infer<typeof statusSchema>['explanations'];
 
 export type Explanation = z.infer<typeof explanationSchema> & { networkError?: boolean };
 
@@ -80,7 +81,7 @@ export async function interpretReason(text: string): Promise<FamilyId | null> {
   }
 }
 
-export async function fetchStatus(): Promise<'live' | 'offline'> {
+export async function fetchStatus(): Promise<AiHealth> {
   try {
     const res = await fetch('/api/status', { signal: AbortSignal.timeout(CLIENT_TIMEOUT_MS) });
     const parsed = statusSchema.safeParse(await res.json());

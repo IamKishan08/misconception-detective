@@ -67,7 +67,7 @@ export function createApp(options: AppOptions) {
   });
 
   api.get('/status', (_req, res) => {
-    res.json({ explanations: options.ai.live ? 'live' : 'offline' });
+    res.json({ explanations: options.ai.health });
   });
 
   api.post('/interpret', async (req, res) => {

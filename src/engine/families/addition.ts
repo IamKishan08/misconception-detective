@@ -71,9 +71,10 @@ function visual(q: Question): VisualStep[] {
   const total = { n: scaleTo(a, common).n + scaleTo(b, common).n, d: common };
   const across = addAcross(a, b);
   const big = larger(a, b);
+  // Start with the contradiction (the across answer is not even bigger than one part), then rebuild the sum.
   const steps: VisualStep[] = [
-    { bars: [bar(a, a.d, 'first')], note: { key: 'show_fraction', value: a } },
-    { bars: [bar(a, a.d, 'first'), bar(b, b.d, 'second')], note: { key: 'show_fraction', value: b } },
+    { bars: [bar(big, big.d, 'first'), bar(across, across.d, 'across')], note: { key: 'across_not_bigger', across, largest: big } },
+    { bars: [bar(a, a.d, 'first'), bar(b, b.d, 'second')], note: { key: 'two_fractions', first: a, second: b } },
   ];
   if (a.d !== b.d) {
     steps.push({ bars: [bar(a, common, 'first'), bar(b, common, 'second')], note: { key: 'common_parts', parts: common } });
@@ -82,7 +83,6 @@ function visual(q: Question): VisualStep[] {
     bars: [bar(a, common, 'first'), bar(b, common, 'second'), bar(total, common, 'total')],
     note: { key: 'total', total, reduced: add(a, b) },
   });
-  steps.push({ bars: [bar(big, big.d, 'first'), bar(across, across.d, 'across')], note: { key: 'across_not_bigger', across, largest: big } });
   return steps;
 }
 

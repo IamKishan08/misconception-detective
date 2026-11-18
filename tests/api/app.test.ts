@@ -17,10 +17,17 @@ describe('health and status', () => {
     expect(res.body).toEqual({ status: 'ok' });
   });
 
-  it('GET /api/status reflects whether a client exists', async () => {
+  it('GET /api/status says "live" only after a real model call has succeeded', async () => {
     expect((await request(offlineApp()).get('/api/status')).body).toEqual({ explanations: 'offline' });
     const live = createApp({ ai: new AiService({ client: fakeClient }) });
+    expect((await request(live).get('/api/status')).body).toEqual({ explanations: 'untested' });
+    await request(live).post('/api/explain').send(validExplain);
     expect((await request(live).get('/api/status')).body).toEqual({ explanations: 'live' });
+
+    const failing: ModelClient = { generateJson: () => Promise.reject(new Error('402 credits depleted')) };
+    const broken = createApp({ ai: new AiService({ client: failing }) });
+    await request(broken).post('/api/explain').send(validExplain);
+    expect((await request(broken).get('/api/status')).body).toEqual({ explanations: 'failing' });
   });
 });
 

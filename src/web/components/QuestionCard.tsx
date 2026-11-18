@@ -115,7 +115,8 @@ export function QuestionCard({ question, busy, onSubmit }: Props) {
   return (
     <form className="card" onSubmit={submit} aria-describedby={`${ids}-prompt`} noValidate>
       <p className="stage-label">
-        {messages.familyName(question.family)} · {messages.stageLabel[question.stage]}
+        <span className={`stage-pill stage-${question.stage}`}>{messages.stageLabel[question.stage]}</span>
+        <span>{messages.familyName(question.family)}</span>
       </p>
       <div id={`${ids}-prompt`} className="prompt">
         <Prompt question={question} />
@@ -125,13 +126,19 @@ export function QuestionCard({ question, busy, onSubmit }: Props) {
         <legend>{m.answerGroup}</legend>
         {b.type === 'add' && (
           <div className="fraction-input">
-            <label htmlFor={`${ids}-n`}>{m.numerator}</label>
-            <input id={`${ids}-n`} inputMode="numeric" autoComplete="off" maxLength={3} value={numerator}
-              onChange={(e) => setNumerator(e.target.value)} />
-            <span className="fraction-line" aria-hidden="true" />
-            <label htmlFor={`${ids}-d`}>{m.denominator}</label>
-            <input id={`${ids}-d`} inputMode="numeric" autoComplete="off" maxLength={3} value={denominator}
-              onChange={(e) => setDenominator(e.target.value)} />
+            <div className="fraction-box">
+              <label htmlFor={`${ids}-n`} className="visually-hidden">{m.numerator}</label>
+              <input id={`${ids}-n`} inputMode="numeric" autoComplete="off" maxLength={3} value={numerator}
+                onChange={(e) => setNumerator(e.target.value)} />
+              <span className="fraction-line" aria-hidden="true" />
+              <label htmlFor={`${ids}-d`} className="visually-hidden">{m.denominator}</label>
+              <input id={`${ids}-d`} inputMode="numeric" autoComplete="off" maxLength={3} value={denominator}
+                onChange={(e) => setDenominator(e.target.value)} />
+            </div>
+            <div className="fraction-hints" aria-hidden="true">
+              <span>{m.top}</span>
+              <span>{m.bottom}</span>
+            </div>
           </div>
         )}
         {(b.type === 'missing_numerator' || b.type === 'missing_denominator') && (
@@ -153,21 +160,24 @@ export function QuestionCard({ question, busy, onSubmit }: Props) {
         )}
       </fieldset>
 
-      <fieldset className="reasons">
-        <legend>{m.reasonGroup}</legend>
-        <div className="choices">
-          {REASON_IDS.map((id) => (
-            <label key={id} className="choice">
-              <input type="radio" name={`${ids}-reason`} value={id} checked={reasonId === id} onChange={() => setReasonId(id)} />
-              <span>{messages.reason(id)}</span>
-            </label>
-          ))}
-        </div>
-        <label htmlFor={`${ids}-text`} className="text-label">{m.reasonText}</label>
-        <textarea id={`${ids}-text`} rows={2} maxLength={MAX_REASON_CHARS} value={reasonText}
-          aria-describedby={`${ids}-count`} onChange={(e) => setReasonText(e.target.value.slice(0, MAX_REASON_CHARS))} />
-        <p id={`${ids}-count`} className="hint-text">{m.reasonCount(reasonText.length, MAX_REASON_CHARS)}</p>
-      </fieldset>
+      <details className="reasons">
+        <summary>{m.reasonToggle}</summary>
+        <fieldset>
+          <legend className="visually-hidden">{m.reasonGroup}</legend>
+          <div className="chips">
+            {REASON_IDS.map((id) => (
+              <label key={id} className="chip">
+                <input type="radio" name={`${ids}-reason`} value={id} checked={reasonId === id} onChange={() => setReasonId(id)} />
+                <span>{messages.reason(id)}</span>
+              </label>
+            ))}
+          </div>
+          <label htmlFor={`${ids}-text`} className="text-label">{m.reasonText}</label>
+          <textarea id={`${ids}-text`} rows={2} maxLength={MAX_REASON_CHARS} value={reasonText}
+            aria-describedby={`${ids}-count`} onChange={(e) => setReasonText(e.target.value.slice(0, MAX_REASON_CHARS))} />
+          <p id={`${ids}-count`} className="hint-text">{m.reasonCount(reasonText.length, MAX_REASON_CHARS)}</p>
+        </fieldset>
+      </details>
 
       {question.stage === 'transfer' && (
         <div className="hint">

@@ -49,7 +49,7 @@ export interface Bar {
 }
 
 export type VisualNote =
-  | { key: 'show_fraction'; value: Rational }
+  | { key: 'two_fractions'; first: Rational; second: Rational }
   | { key: 'common_parts'; parts: number }
   | { key: 'total'; total: Rational; reduced: Rational }
   | { key: 'across_not_bigger'; across: Rational; largest: Rational }

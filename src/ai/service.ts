@@ -10,6 +10,8 @@ import { INTERPRETATION_JSON_SCHEMA, explanationJsonSchema, modelExplanationSche
 import { TEMPLATES, defaultTemplate, fallbackSentences, findTemplate } from './templates.js';
 
 export type AiSource = 'gemini' | 'fallback';
+/** Honest health for the UI: "live" only after a real model call succeeded; "failing" after the latest one failed. */
+export type AiHealth = 'offline' | 'untested' | 'live' | 'failing';
 export type FallbackReason = 'no_key' | 'timeout' | 'invalid_output' | 'provider_error' | 'budget';
 
 export interface ExplanationResult {
@@ -56,6 +58,7 @@ export class AiService {
   private readonly inFlight = new Map<string, Promise<ExplanationResult>>();
   private windowStart = 0;
   private callsInWindow = 0;
+  private lastCall: 'none' | 'ok' | 'failed' = 'none';
 
   constructor(options: AiServiceOptions) {
     this.client = options.client;
@@ -67,6 +70,12 @@ export class AiService {
 
   get live(): boolean {
     return this.client !== null;
+  }
+
+  get health(): AiHealth {
+    if (this.client === null) return 'offline';
+    if (this.lastCall === 'none') return 'untested';
+    return this.lastCall === 'ok' ? 'live' : 'failing';
   }
 
   /** Maps free text to a family id or 'none'. Never cached (the cache must not hold learner text). */
@@ -147,9 +156,14 @@ export class AiService {
       return withTimeout((signal) => client.generateJson(prompt, schema, signal), this.timeoutMs);
     };
     try {
-      return await attempt();
+      const raw = await attempt().catch((error: unknown) => {
+        if (error instanceof TransientModelError) return attempt();
+        throw error;
+      });
+      this.lastCall = 'ok';
+      return raw;
     } catch (error) {
-      if (error instanceof TransientModelError) return attempt();
+      this.lastCall = 'failed';
       throw error;
     }
   }

@@ -11,6 +11,8 @@ import { QuestionCard, type Submission } from './QuestionCard.js';
 interface Props {
   state: LearnerState;
   onChange: (state: LearnerState) => void;
+  /** Reports where the latest explanation came from, so the header badge reflects reality. */
+  onExplanationSource: (source: Explanation['source']) => void;
 }
 
 interface Feedback {
@@ -21,7 +23,7 @@ interface Feedback {
   invalidReason?: InvalidReason;
 }
 
-export function StudentFlow({ state, onChange }: Props) {
+export function StudentFlow({ state, onChange, onExplanationSource }: Props) {
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [explanation, setExplanation] = useState<Explanation | null>(null);
@@ -36,13 +38,15 @@ export function StudentFlow({ state, onChange }: Props) {
     const family = step.question.family;
     let cancelled = false;
     void fetchExplanation(family, suggestedTemplateId(step.question), hintLevel(state.families[family])).then((result) => {
-      if (!cancelled) setExplanation(result);
+      if (cancelled) return;
+      setExplanation(result);
+      onExplanationSource(result.source);
     });
     return () => {
       cancelled = true;
       requested.current = null;
     };
-  }, [explainKey, step, state.families]);
+  }, [explainKey, step, state.families, onExplanationSource]);
 
   async function handleSubmit(submission: Submission) {
     if (step.kind !== 'question') return;
@@ -106,7 +110,14 @@ export function StudentFlow({ state, onChange }: Props) {
         <QuestionCard key={`${step.question.id}-${state.counter}`} question={step.question} busy={busy} onSubmit={(s) => void handleSubmit(s)} />
       )}
       {step.kind === 'explanation' && (
-        <ExplanationPanel key={step.question.id} question={step.question} labelled={step.labelled} explanation={explanation} onContinue={handleContinue} />
+        <ExplanationPanel
+          key={step.question.id}
+          question={step.question}
+          labelled={step.labelled}
+          learnerAnswer={state.families[step.question.family].attempts.findLast((a) => a.question.id === step.question.id)?.answerDisplay ?? null}
+          explanation={explanation}
+          onContinue={handleContinue}
+        />
       )}
       {step.kind === 'finished' && (
         <section className="card">

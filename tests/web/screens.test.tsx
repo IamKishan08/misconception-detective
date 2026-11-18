@@ -58,7 +58,7 @@ describe('screens', () => {
   it('explanation screen has no axe violations and shows the offline label honestly', async () => {
     const question: Question = { id: 'q', family: 'F1', stage: 'followup', difficulty: 1, body: { type: 'add', a: { n: 1, d: 5 }, b: { n: 2, d: 5 } } };
     const { container } = render(
-      <ExplanationPanel question={question} labelled explanation={{ source: 'fallback', templateId: 'F1.size_check', sentences: ['Adding makes it bigger.'] }} onContinue={() => undefined} />,
+      <ExplanationPanel question={question} labelled learnerAnswer="2/10" explanation={{ source: 'fallback', templateId: 'F1.size_check', sentences: ['Adding makes it bigger.'] }} onContinue={() => undefined} />,
     );
     expect(screen.getByText(messages.explanationsOffline)).toBeTruthy();
     expect(screen.getAllByRole('img').length).toBeGreaterThan(0);

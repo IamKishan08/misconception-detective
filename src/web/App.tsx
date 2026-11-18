@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { LearnerState } from '../engine/progression.js';
-import { fetchStatus } from './api.js';
+import { fetchStatus, type AiHealth } from './api.js';
 import { StudentFlow } from './components/StudentFlow.js';
 import { TeacherView } from './components/TeacherView.js';
 import { messages } from './messages.js';
@@ -13,13 +13,16 @@ export function App() {
   const [view, setView] = useState<View>('practise');
   const [state, setState] = useState<LearnerState>(loadLearner);
   const [settings, setSettings] = useState(loadSettings);
-  const [aiStatus, setAiStatus] = useState<'live' | 'offline' | null>(null);
+  const [aiStatus, setAiStatus] = useState<AiHealth | null>(null);
   const [storageOk, setStorageOk] = useState(true);
   const [announcement, setAnnouncement] = useState('');
 
   useEffect(() => {
     void fetchStatus().then(setAiStatus);
   }, []);
+
+  // The badge follows the latest real explanation; "live" is never shown before a model call has succeeded.
+  const onExplanationSource = useCallback((source: 'gemini' | 'fallback') => setAiStatus(source === 'gemini' ? 'live' : 'failing'), []);
 
   function update(next: LearnerState) {
     setState(next);
@@ -43,14 +46,24 @@ export function App() {
     <>
       <a className="skip-link" href="#main">{messages.skipToContent}</a>
       <header className="site-header">
-        <div>
-          <h1>{messages.appName}</h1>
-          <p className="tagline">{messages.tagline}</p>
+        <div className="brand">
+          <svg className="logo" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+            <rect width="32" height="32" rx="8" className="logo-bg" />
+            <rect x="5" y="9" width="11" height="6" className="logo-fill" />
+            <rect x="16" y="9" width="11" height="6" className="logo-line" />
+            <rect x="5" y="18" width="7.3" height="6" className="logo-fill" />
+            <rect x="12.3" y="18" width="7.3" height="6" className="logo-line" />
+            <rect x="19.6" y="18" width="7.4" height="6" className="logo-line" />
+          </svg>
+          <div>
+            <h1>{messages.appName}</h1>
+            <p className="tagline">{messages.tagline}</p>
+          </div>
         </div>
-        {aiStatus !== null && (
-          <p className={`status-pill ${aiStatus}`}>
+        {aiStatus !== null && aiStatus !== 'untested' && (
+          <p className={`status-pill ${aiStatus === 'live' ? 'live' : 'offline'}`}>
             {aiStatus === 'live' ? messages.explanationsLive : messages.explanationsOffline}
-            {aiStatus === 'offline' && <span className="visually-hidden"> {messages.explanationsOfflineDetail}</span>}
+            {aiStatus !== 'live' && <span className="visually-hidden"> {messages.explanationsOfflineDetail}</span>}
           </p>
         )}
         <nav aria-label="Main">
@@ -69,7 +82,7 @@ export function App() {
       <main id="main" tabIndex={-1}>
         {!storageOk && <p className="note" role="note">{messages.controls.storageWarning}</p>}
         <p className="visually-hidden" role="status">{announcement}</p>
-        {view === 'practise' && <StudentFlow state={state} onChange={update} />}
+        {view === 'practise' && <StudentFlow state={state} onChange={update} onExplanationSource={onExplanationSource} />}
         {view === 'teacher' && <TeacherView state={state} showSamples={settings.showSamples} onToggleSamples={toggleSamples} />}
         {view === 'data' && (
           <section className="card" aria-labelledby="data-heading">

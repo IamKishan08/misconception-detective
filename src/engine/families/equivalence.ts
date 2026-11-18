@@ -90,7 +90,9 @@ function evaluate(q: Question, answer: Answer): Evaluation {
   if (q.body.type === 'equal_check') {
     const read = readChoice(answer);
     if (!('ok' in read)) return read;
-    return result(read.value === 'equal', 'not_equivalent', read.value);
+    const { first, second } = q.body;
+    const symbol = read.value === 'equal' ? '=' : read.value === 'first' ? '>' : '<';
+    return result(read.value === 'equal', 'not_equivalent', `${format(first)} ${symbol} ${format(second)}`);
   }
   const read = readWhole(answer);
   if (!('ok' in read)) return read;
@@ -110,10 +112,10 @@ function visual(q: Question): VisualStep[] {
   const scaled = { n: known.n * factor, d: known.d * factor };
   // "Change only the bottom": same count of shaded parts, but each part is smaller, so the amount shrinks.
   const wrong = { n: known.n, d: scaled.d };
+  // Start with what "change only the bottom" gives next to the true equal fraction, then show the splitting.
   return [
-    { bars: [bar(known, known.d, 'first')], note: { key: 'show_fraction', value: known } },
-    { bars: [bar(known, known.d, 'first'), bar(scaled, scaled.d, 'equivalent')], note: { key: 'split_parts', factor, from: known, to: scaled } },
     { bars: [bar(scaled, scaled.d, 'equivalent'), bar(wrong, scaled.d, 'one_part_scaled')], note: { key: 'one_part_scaled', wrong, right: scaled } },
+    { bars: [bar(known, known.d, 'first'), bar(scaled, scaled.d, 'equivalent')], note: { key: 'split_parts', factor, from: known, to: scaled } },
   ];
 }
 

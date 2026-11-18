@@ -4,7 +4,7 @@
  */
 import type { FamilyStatus, NextAction, ReasonId } from '../engine/progression.js';
 import { format, type Rational } from '../engine/rational.js';
-import type { FamilyId, InvalidReason, Outcome, Question, VisualNote } from '../engine/types.js';
+import type { Answer, Bar, FamilyId, InvalidReason, Outcome, Question, VisualNote } from '../engine/types.js';
 
 const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
   'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
@@ -107,6 +107,7 @@ function actionLine(action: NextAction): string {
 
 export const messages = {
   appName: 'Misconception Detective',
+  audience: 'Fractions practice for classes 5 to 8',
   tagline: 'Find the idea behind a fractions mistake, then fix it.',
   skipToContent: 'Skip to main content',
   nav: { practise: 'Practise', teacher: 'Teacher view', data: 'Your data' },
@@ -136,15 +137,28 @@ export const messages = {
     optionEqualCheckSecond: (b: Rational) => `No, ${format(b)} is larger`,
     numerator: 'Top number (numerator)',
     denominator: 'Bottom number (denominator)',
+    top: 'top',
+    bottom: 'bottom',
     missingNumber: 'Missing number',
     answerGroup: 'Your answer',
-    reasonGroup: 'How did you work it out? (optional)',
+    reasonGroup: 'How did you work it out?',
+    reasonToggle: 'Tell us how you worked it out (optional)',
     reasonText: 'Or type your reason (optional, up to 200 characters)',
     reasonCount: (n: number, max: number) => `${n} of ${max} characters`,
     showHint: 'Show a hint',
     hintNote: 'Using a hint is fine. A question answered with a hint does not count toward "secure".',
     check: 'Check answer',
     checking: 'Checking…',
+  },
+
+  /** An answer as the learner would read it, e.g. "5/6", "1/4", "They are equal". */
+  answerText(question: Question, answer: Answer): string {
+    if (answer.kind === 'fraction') return `${answer.numerator}/${answer.denominator}`;
+    if (answer.kind === 'whole') return answer.value;
+    const b = question.body;
+    if (answer.optionId === 'equal' || (b.type !== 'compare' && b.type !== 'equal_check')) return 'They are equal';
+    if (b.type === 'equal_check') return answer.optionId === 'first' ? `${format(b.first)} is larger` : `${format(b.second)} is larger`;
+    return format(answer.optionId === 'first' ? b.first : b.second);
   },
 
   /** Short one-line text of a question, for the teacher table. */
@@ -191,12 +205,32 @@ export const messages = {
     continue: 'Try a question with new numbers',
     loading: 'Loading the explanation…',
     templateTitle: (id: string) => TEMPLATE_TITLES[id] ?? 'Explanation',
+    yourAnswer: 'Your answer',
+    correctAnswer: 'Correct answer',
+    whyHeading: 'Why it works',
+    stepsLabel: 'Explanation steps',
+    goToStep: (i: number) => `Go to step ${i}`,
+    barCaption(role: Bar['role'], value: Rational): string {
+      switch (role) {
+        case 'first':
+        case 'second':
+          return format(value);
+        case 'total':
+          return `Total ${format(value)}`;
+        case 'across':
+          return `Tops + bottoms ${format(value)}`;
+        case 'equivalent':
+          return `Equal ${format(value)}`;
+        case 'one_part_scaled':
+          return `Bottom only ${format(value)}`;
+      }
+    },
     barLabel: (value: Rational, parts: number, shaded: number) =>
       `${fractionSpeech(value)}: a bar cut into ${parts} equal parts with ${shaded} shaded`,
     note(note: VisualNote): string {
       switch (note.key) {
-        case 'show_fraction':
-          return `This bar shows ${format(note.value)}: ${note.value.n} of ${note.value.d} equal parts are shaded.`;
+        case 'two_fractions':
+          return `Here are ${format(note.first)} and ${format(note.second)} on the same size whole. The parts are different sizes.`;
         case 'common_parts':
           return `Cut both bars into ${note.parts} equal parts. Now the parts are the same size and can be counted together.`;
         case 'total':
