@@ -6,7 +6,7 @@ import { DEFAULT_ORDER, memoByStage, properFractions, range, readChoice, readWho
 const MAX_BASE_DENOMINATOR = { 1: 6, 2: 10 } as const;
 const MAX_FACTOR = { 1: 3, 2: 4 } as const;
 /** Keeps the scaled denominator small enough to draw as a bar. */
-const MAX_SCALED_DENOMINATOR = { 1: 18, 2: 40 } as const;
+const MAX_SCALED_DENOMINATOR = { 1: 18, 2: 24 } as const;
 
 interface Scaling {
   known: Rational;

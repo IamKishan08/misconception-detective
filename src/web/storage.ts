@@ -85,7 +85,11 @@ function writeJson(key: string, value: unknown): boolean {
 
 export function loadLearner(): LearnerState {
   const parsed = learnerSchema.safeParse(readJson(STORAGE_KEY));
-  return parsed.success ? parsed.data : createLearner(randomSeed());
+  if (parsed.success) return parsed.data;
+  // Save a new learner straight away so a reload shows the same first question.
+  const fresh = createLearner(randomSeed());
+  saveLearner(fresh);
+  return fresh;
 }
 
 export function saveLearner(state: LearnerState): boolean {

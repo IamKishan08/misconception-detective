@@ -18,16 +18,17 @@ export function App() {
   const [announcement, setAnnouncement] = useState('');
 
   useEffect(() => {
-    setStorageOk(saveLearner(state));
-  }, [state]);
-
-  useEffect(() => {
     void fetchStatus().then(setAiStatus);
   }, []);
 
+  function update(next: LearnerState) {
+    setState(next);
+    setStorageOk(saveLearner(next));
+  }
+
   function reset() {
     if (!window.confirm(messages.controls.resetConfirm)) return;
-    setState(resetLearner());
+    update(resetLearner());
     setView('practise');
     setAnnouncement(messages.controls.resetDone);
   }
@@ -68,7 +69,7 @@ export function App() {
       <main id="main" tabIndex={-1}>
         {!storageOk && <p className="note" role="note">{messages.controls.storageWarning}</p>}
         <p className="visually-hidden" role="status">{announcement}</p>
-        {view === 'practise' && <StudentFlow state={state} onChange={setState} />}
+        {view === 'practise' && <StudentFlow state={state} onChange={update} />}
         {view === 'teacher' && <TeacherView state={state} showSamples={settings.showSamples} onToggleSamples={toggleSamples} />}
         {view === 'data' && (
           <section className="card" aria-labelledby="data-heading">

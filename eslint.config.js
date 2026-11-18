@@ -14,12 +14,13 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       '@typescript-eslint/no-non-null-assertion': 'error',
       '@typescript-eslint/consistent-type-assertions': ['error', { assertionStyle: 'never' }],
     },
   },
   {
     files: ['tests/**/*.{ts,tsx}'],
-    rules: { '@typescript-eslint/consistent-type-assertions': 'off' },
+    rules: { '@typescript-eslint/consistent-type-assertions': 'off', '@typescript-eslint/no-non-null-assertion': 'off' },
   },
 );
