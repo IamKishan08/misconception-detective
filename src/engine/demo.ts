@@ -1,0 +1,63 @@
+/**
+ * Reproducible learner scripts. Used for the three README demo contexts, the engine tests,
+ * and the clearly labelled "Sample" learners in the teacher view.
+ */
+import { FAMILIES } from './families/index.js';
+import { continueAfterExplanation, createLearner, submitAnswer, type LearnerState, type NextAction } from './progression.js';
+
+/** 'wrong' gives the family's misconception answer; 'right' the correct answer; 'continue' leaves an explanation. */
+export type ScriptMove = 'wrong' | 'right' | 'continue';
+
+export interface ScriptRun {
+  readonly state: LearnerState;
+  readonly actions: readonly NextAction[];
+}
+
+export function runScript(seed: number, moves: readonly ScriptMove[]): ScriptRun {
+  let state = createLearner(seed);
+  const actions: NextAction[] = [];
+  for (const move of moves) {
+    if (move === 'continue') {
+      state = continueAfterExplanation(state);
+      continue;
+    }
+    if (state.step.kind !== 'question') throw new Error(`Script expected a question but found ${state.step.kind}`);
+    const question = state.step.question;
+    const family = FAMILIES[question.family];
+    const answer = move === 'wrong' ? family.misconceptionAnswer(question) : family.correctAnswer(question);
+    const result = submitAnswer(state, answer);
+    state = result.state;
+    actions.push(result.action);
+  }
+  return { state, actions };
+}
+
+/** Fixed seed so the README examples and tests always show the same numbers. */
+export const DEMO_SEED = 20261119;
+
+export const DEMO_CONTEXTS = {
+  /** 1. New learner, one error matching F1 once → ask a follow-up before labelling. */
+  newLearnerOneError: ['wrong'],
+  /** 2. Same F1 error on the item and on the follow-up → explanation, then a transfer question. */
+  repeatedError: ['wrong', 'wrong', 'continue'],
+  /** 3. Correct on the transfer question after the explanation → harder transfer (family "improving"). */
+  transferAfterExplanation: ['wrong', 'wrong', 'continue', 'right'],
+} as const satisfies Record<string, readonly ScriptMove[]>;
+
+export interface SampleLearner {
+  readonly id: string;
+  readonly displayName: string;
+  readonly state: LearnerState;
+}
+
+/** Sample learners for the teacher view. Never mixed into the real learner's own progress. */
+export function buildSampleLearners(): SampleLearner[] {
+  const scripts: { id: string; name: string; seed: number; moves: ScriptMove[] }[] = [
+    { id: 'sample-a', name: 'Sample learner A', seed: 101, moves: ['wrong', 'wrong'] },
+    { id: 'sample-b', name: 'Sample learner B', seed: 202, moves: ['right', 'right', 'wrong'] },
+    { id: 'sample-c', name: 'Sample learner C', seed: 303, moves: ['right', 'right', 'right', 'right', 'wrong', 'wrong'] },
+    { id: 'sample-d', name: 'Sample learner D', seed: 404, moves: ['wrong', 'wrong', 'continue', 'right'] },
+    { id: 'sample-e', name: 'Sample learner E', seed: 505, moves: ['right', 'right', 'wrong', 'wrong'] },
+  ];
+  return scripts.map((s) => ({ id: s.id, displayName: s.name, state: runScript(s.seed, s.moves).state }));
+}

@@ -1,0 +1,190 @@
+import { useId, useState, type FormEvent } from 'react';
+import { REASON_IDS, type ReasonId } from '../../engine/progression.js';
+import type { Answer, ChoiceId, Question } from '../../engine/types.js';
+import { MAX_REASON_CHARS } from '../../ai/schemas.js';
+import { messages } from '../messages.js';
+import { Fraction } from './Fraction.js';
+
+export interface Submission {
+  answer: Answer;
+  reasonId: ReasonId | null;
+  reasonText: string;
+  hintUsed: boolean;
+}
+
+interface Props {
+  question: Question;
+  busy: boolean;
+  onSubmit: (submission: Submission) => void;
+}
+
+const m = messages.question;
+
+function Prompt({ question }: { question: Question }) {
+  const b = question.body;
+  switch (b.type) {
+    case 'add':
+      return (
+        <>
+          <p>{m.add}</p>
+          <p className="expression">
+            <Fraction value={b.a} /> <span aria-hidden="true">+</span>
+            <span className="visually-hidden">plus</span> <Fraction value={b.b} />
+          </p>
+        </>
+      );
+    case 'compare':
+      return <p>{b.context === 'share' ? m.compareShare(b.first, b.second) : m.comparePlain}</p>;
+    case 'missing_numerator':
+      return (
+        <>
+          <p>{m.missingNumerator}</p>
+          <p className="expression">
+            <Fraction value={b.known} /> <span aria-hidden="true">=</span>
+            <span className="visually-hidden">equals a missing number over {b.targetDen}</span>
+            <span className="fraction" aria-hidden="true">
+              <span className="fraction-top">?</span>
+              <span className="fraction-bottom">{b.targetDen}</span>
+            </span>
+          </p>
+        </>
+      );
+    case 'missing_denominator':
+      return (
+        <>
+          <p>{m.missingDenominator}</p>
+          <p className="expression">
+            <Fraction value={b.known} /> <span aria-hidden="true">=</span>
+            <span className="visually-hidden">equals {b.targetNum} over a missing number</span>
+            <span className="fraction" aria-hidden="true">
+              <span className="fraction-top">{b.targetNum}</span>
+              <span className="fraction-bottom">?</span>
+            </span>
+          </p>
+        </>
+      );
+    case 'equal_check':
+      return (
+        <>
+          <p>{m.equalCheck}</p>
+          <p className="expression">
+            <Fraction value={b.first} /> <span aria-hidden="true">and</span>
+            <span className="visually-hidden">and</span> <Fraction value={b.second} />
+          </p>
+        </>
+      );
+  }
+}
+
+function choiceLabel(question: Question, id: ChoiceId) {
+  const b = question.body;
+  if (b.type === 'compare') {
+    if (id === 'equal') return m.optionEqual;
+    return <Fraction value={id === 'first' ? b.first : b.second} />;
+  }
+  if (b.type === 'equal_check') {
+    if (id === 'equal') return m.optionEqual;
+    return id === 'first' ? m.optionEqualCheckFirst(b.first) : m.optionEqualCheckSecond(b.second);
+  }
+  return null;
+}
+
+export function QuestionCard({ question, busy, onSubmit }: Props) {
+  const ids = useId();
+  const [numerator, setNumerator] = useState('');
+  const [denominator, setDenominator] = useState('');
+  const [whole, setWhole] = useState('');
+  const [choice, setChoice] = useState('');
+  const [reasonId, setReasonId] = useState<ReasonId | null>(null);
+  const [reasonText, setReasonText] = useState('');
+  const [hintShown, setHintShown] = useState(false);
+  const b = question.body;
+
+  function answer(): Answer {
+    if (b.type === 'add') return { kind: 'fraction', numerator, denominator };
+    if (b.type === 'compare' || b.type === 'equal_check') return { kind: 'choice', optionId: choice };
+    return { kind: 'whole', value: whole };
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (busy) return;
+    onSubmit({ answer: answer(), reasonId, reasonText: reasonText.trim(), hintUsed: hintShown });
+  }
+
+  return (
+    <form className="card" onSubmit={submit} aria-describedby={`${ids}-prompt`} noValidate>
+      <p className="stage-label">
+        {messages.familyName(question.family)} · {messages.stageLabel[question.stage]}
+      </p>
+      <div id={`${ids}-prompt`} className="prompt">
+        <Prompt question={question} />
+      </div>
+
+      <fieldset className="answer">
+        <legend>{m.answerGroup}</legend>
+        {b.type === 'add' && (
+          <div className="fraction-input">
+            <label htmlFor={`${ids}-n`}>{m.numerator}</label>
+            <input id={`${ids}-n`} inputMode="numeric" autoComplete="off" maxLength={3} value={numerator}
+              onChange={(e) => setNumerator(e.target.value)} />
+            <span className="fraction-line" aria-hidden="true" />
+            <label htmlFor={`${ids}-d`}>{m.denominator}</label>
+            <input id={`${ids}-d`} inputMode="numeric" autoComplete="off" maxLength={3} value={denominator}
+              onChange={(e) => setDenominator(e.target.value)} />
+          </div>
+        )}
+        {(b.type === 'missing_numerator' || b.type === 'missing_denominator') && (
+          <div className="whole-input">
+            <label htmlFor={`${ids}-w`}>{m.missingNumber}</label>
+            <input id={`${ids}-w`} inputMode="numeric" autoComplete="off" maxLength={3} value={whole}
+              onChange={(e) => setWhole(e.target.value)} />
+          </div>
+        )}
+        {(b.type === 'compare' || b.type === 'equal_check') && (
+          <div className="choices">
+            {b.order.map((id) => (
+              <label key={id} className="choice">
+                <input type="radio" name={`${ids}-choice`} value={id} checked={choice === id} onChange={() => setChoice(id)} />
+                <span>{choiceLabel(question, id)}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </fieldset>
+
+      <fieldset className="reasons">
+        <legend>{m.reasonGroup}</legend>
+        <div className="choices">
+          {REASON_IDS.map((id) => (
+            <label key={id} className="choice">
+              <input type="radio" name={`${ids}-reason`} value={id} checked={reasonId === id} onChange={() => setReasonId(id)} />
+              <span>{messages.reason(id)}</span>
+            </label>
+          ))}
+        </div>
+        <label htmlFor={`${ids}-text`} className="text-label">{m.reasonText}</label>
+        <textarea id={`${ids}-text`} rows={2} maxLength={MAX_REASON_CHARS} value={reasonText}
+          aria-describedby={`${ids}-count`} onChange={(e) => setReasonText(e.target.value.slice(0, MAX_REASON_CHARS))} />
+        <p id={`${ids}-count`} className="hint-text">{m.reasonCount(reasonText.length, MAX_REASON_CHARS)}</p>
+      </fieldset>
+
+      {question.stage === 'transfer' && (
+        <div className="hint">
+          {hintShown ? (
+            <p role="note">{messages.hint(question.family)}</p>
+          ) : (
+            <button type="button" className="secondary" onClick={() => setHintShown(true)} aria-describedby={`${ids}-hintnote`}>
+              {m.showHint}
+            </button>
+          )}
+          <p id={`${ids}-hintnote`} className="hint-text">{m.hintNote}</p>
+        </div>
+      )}
+
+      <button type="submit" className="primary" disabled={busy}>
+        {busy ? m.checking : m.check}
+      </button>
+    </form>
+  );
+}
