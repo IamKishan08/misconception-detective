@@ -178,6 +178,37 @@ test.describe('Solve my problem', () => {
   });
 });
 
+test.describe('Small screens', () => {
+  test('no screen overflows sideways on a 360 px phone, so nothing is zoomed out or covered', async ({ page }) => {
+    await page.setViewportSize({ width: 360, height: 740 });
+    await page.goto('/');
+    await noHorizontalScroll(page);
+    // Solve, with a result, an explanation and built-in help showing.
+    await page.getByLabel('Your fraction problem').fill('3/4 - 1/6');
+    await page.getByLabel('Your answer (optional)').fill('2/3');
+    await page.getByRole('button', { name: 'Check my working' }).click();
+    await page.getByLabel('Ask about this problem').fill('Why do the denominators have to match?');
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await expect(page.locator('.help-card')).toBeVisible();
+    await noHorizontalScroll(page);
+    // A second problem, then My progress with activity (it has a table).
+    await page.getByLabel('Your fraction problem').fill('1/2 + 1/4');
+    await page.getByLabel('Your answer (optional)').fill('2/6');
+    await page.getByRole('button', { name: 'Check my working' }).click();
+    await page.getByRole('button', { name: 'My progress' }).click();
+    await expect(page.locator('.history-item')).toHaveCount(2);
+    await noHorizontalScroll(page);
+    // Every control on it is reachable by an ordinary click (nothing sits on top of it).
+    await page.getByRole('button', { name: 'Review the explanation' }).first().click({ timeout: 5000 });
+    await expect(page.locator('.history-item .step').first()).toBeVisible();
+    await noHorizontalScroll(page);
+    await page.getByRole('button', { name: 'Practise', exact: true }).click();
+    await noHorizontalScroll(page);
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await noHorizontalScroll(page);
+  });
+});
+
 test.describe('Practise', () => {
   test('wrong answer keeps the question, offers three ways to get help, and completes the original flow', async ({ page }) => {
     const errors = watchErrors(page);
@@ -227,7 +258,7 @@ test.describe('Practise', () => {
     await expect(page.locator('.history-item')).toHaveCount(2);
     await expect(page.locator('.history-item .outcome-badge')).toHaveText(['Not yet correct', 'Not yet correct']);
     await expect(page.getByText(/teacher|sample|made-up/i)).toHaveCount(0);
-    await page.getByRole('button', { name: 'Review the explanation' }).first().click();
+    await page.getByRole('button', { name: 'Review the explanation' }).first().click({ timeout: 10_000 });
     await expect(page.locator('.history-item .step').first()).toBeVisible();
 
     // Progress survives a reload.

@@ -80,7 +80,7 @@ export function ProgressView({ history, learner, onPractiseAgain, onDeleteHistor
 
         <h3>{m.topicsHeading}</h3>
         {topics.length === 0 && <p className="muted">{m.noHistory}</p>}
-        {topics.length > 0 && <div className="table-wrap">
+        {topics.length > 0 && <div className="table-wrap" role="region" aria-label={m.topicsHeading} tabIndex={0}>
           <table>
             <caption className="visually-hidden">{m.topicsHeading}</caption>
             <thead>

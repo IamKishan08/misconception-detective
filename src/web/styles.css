@@ -315,7 +315,7 @@ form .primary { margin-top: 0.7rem; }
 .source.live { color: var(--ok); font-weight: 600; }
 
 /* Teacher view */
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; max-width: 100%; }
 table { border-collapse: collapse; width: 100%; font-size: 0.93rem; }
 caption { text-align: left; font-weight: 700; padding: 0.25rem 0; }
 th, td { border-bottom: 1px solid var(--border); padding: 0.5rem 0.4rem; text-align: left; vertical-align: top; }
@@ -347,7 +347,9 @@ thead th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em;
 .danger { border-color: var(--bar-wrong); color: var(--warn); }
 
 /* My progress */
-.progress { display: grid; gap: 0.6rem; }
+.progress { display: grid; gap: 0.6rem; grid-template-columns: minmax(0, 1fr); }
+/* Grid items default to min-width:auto, which lets a wide table stretch the whole page past the phone's width. */
+.progress > *, .history > *, .history-item { min-width: 0; }
 .progress .card { margin: 0; }
 .empty-state { background: var(--surface-alt); border-radius: 10px; padding: 0.4rem 1rem 0.8rem; }
 .revisit { margin: 0.2rem 0; padding-left: 1.2rem; }
