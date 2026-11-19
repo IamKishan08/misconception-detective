@@ -1,21 +1,37 @@
 /**
- * Guarded access to the model: timeout, one retry on transient errors, an hourly per-instance budget,
- * a small LRU cache for explanations, in-flight de-duplication, strict validation and verified fallbacks.
- * The model never decides correctness, labels or next steps.
+ * Guarded access to the model: timeout, one retry on transient errors only, an hourly per-instance budget, a small cache
+ * for template choices, in-flight de-duplication, strict validation and built-in fallbacks.
+ * The model never decides correctness, labels or next steps, and never writes text that is displayed: it only SELECTS
+ * identifiers, which are validated for the current problem and rendered from verified engine data.
  */
-import type { FamilyId } from '../engine/types.js';
-import { TransientModelError, type ModelClient } from './modelClient.js';
-import type { Problem } from '../engine/solver/problem.js';
+import { validateSelection, type HelpContext, type HelpSelection } from '../engine/solver/help.js';
 import { solve } from '../engine/solver/solve.js';
+import type { Problem } from '../engine/solver/problem.js';
+import type { CauseId } from '../engine/solver/check.js';
+import type { FamilyId } from '../engine/types.js';
+import { ModelCallError, TransientModelError, type ModelClient } from './modelClient.js';
 import { askPrompt, explainPrompt, interpretPrompt, type Prompt } from './prompts.js';
-import { ANSWER_JSON_SCHEMA, INTERPRETATION_JSON_SCHEMA, explanationJsonSchema, modelAnswerSchema, modelExplanationSchema, modelInterpretationSchema } from './schemas.js';
-import { verifyAiText } from './verify.js';
+import {
+  INTERPRETATION_JSON_SCHEMA,
+  explanationJsonSchema,
+  modelExplanationSchema,
+  modelInterpretationSchema,
+  modelSelectionSchema,
+  selectionJsonSchema,
+} from './schemas.js';
 import { TEMPLATES, defaultTemplate, fallbackSentences, findTemplate } from './templates.js';
 
 export type AiSource = 'gemini' | 'fallback';
-/** Honest health for the UI: "live" only after a real model call succeeded; "failing" after the latest one failed. */
+/**
+ * Honest health for the UI. "live" only after a model reply was parsed AND accepted by validation; "failing" after the
+ * latest attempt failed or was rejected; "untested" before any attempt; "offline" with no key.
+ */
 export type AiHealth = 'offline' | 'untested' | 'live' | 'failing';
-export type FallbackReason = 'no_key' | 'timeout' | 'invalid_output' | 'provider_error' | 'budget';
+/**
+ * Why the built-in path was used. Diagnostic detail stays server-side: the browser maps every reason except
+ * "no_key" to one simple "AI help is not available right now" message.
+ */
+export type FallbackReason = 'no_key' | 'auth' | 'quota' | 'model_unavailable' | 'timeout' | 'malformed' | 'rejected' | 'provider_error' | 'budget';
 
 export interface ExplanationResult {
   readonly source: AiSource;
@@ -32,8 +48,8 @@ export interface InterpretationResult {
 
 export interface AskResult {
   readonly source: AiSource;
-  /** Present only when the model's text passed every check against the verified solution. */
-  readonly answer?: string;
+  /** Present only when the model's choice passed validation for this problem. */
+  readonly selection?: HelpSelection;
   readonly fallbackReason?: FallbackReason;
 }
 
@@ -43,6 +59,8 @@ export interface AiServiceOptions {
   readonly callsPerHour?: number;
   readonly cacheSize?: number;
   readonly now?: () => number;
+  /** Receives only a failure category (never keys, prompts or learner text). Defaults to one JSON log line. */
+  readonly onFailure?: (reason: FallbackReason) => void;
 }
 
 const DEFAULT_TIMEOUT_MS = 6000;
@@ -64,11 +82,12 @@ export class AiService {
   private readonly callsPerHour: number;
   private readonly cacheSize: number;
   private readonly now: () => number;
+  private readonly onFailure: (reason: FallbackReason) => void;
   private readonly cache = new Map<string, ExplanationResult>();
   private readonly inFlight = new Map<string, Promise<ExplanationResult>>();
   private windowStart = 0;
   private callsInWindow = 0;
-  private lastCall: 'none' | 'ok' | 'failed' = 'none';
+  private lastCall: 'none' | 'accepted' | 'failed' = 'none';
 
   constructor(options: AiServiceOptions) {
     this.client = options.client;
@@ -76,6 +95,8 @@ export class AiService {
     this.callsPerHour = options.callsPerHour ?? DEFAULT_CALLS_PER_HOUR;
     this.cacheSize = options.cacheSize ?? DEFAULT_CACHE_SIZE;
     this.now = options.now ?? Date.now;
+    this.onFailure =
+      options.onFailure ?? ((reason) => console.log(JSON.stringify({ severity: 'WARNING', message: 'model_unavailable', reason })));
   }
 
   get live(): boolean {
@@ -85,7 +106,17 @@ export class AiService {
   get health(): AiHealth {
     if (this.client === null) return 'offline';
     if (this.lastCall === 'none') return 'untested';
-    return this.lastCall === 'ok' ? 'live' : 'failing';
+    return this.lastCall === 'accepted' ? 'live' : 'failing';
+  }
+
+  private accepted(): void {
+    this.lastCall = 'accepted';
+  }
+
+  /** Records a failed or rejected attempt. A rejected reply never counts as the AI working. */
+  private failed(reason: FallbackReason): void {
+    this.lastCall = 'failed';
+    if (reason !== 'no_key') this.onFailure(reason);
   }
 
   /** Maps free text to a family id or 'none'. Never cached (the cache must not hold learner text). */
@@ -93,32 +124,39 @@ export class AiService {
     try {
       const raw = await this.call(interpretPrompt(text), INTERPRETATION_JSON_SCHEMA);
       const parsed = modelInterpretationSchema.safeParse(safeJson(raw));
-      if (!parsed.success) return { source: 'fallback', family: 'none', fallbackReason: 'invalid_output' };
+      if (!parsed.success) throw new ModelFailure('malformed');
+      this.accepted();
       return { source: 'gemini', family: parsed.data.family };
     } catch (error) {
-      return { source: 'fallback', family: 'none', fallbackReason: reasonOf(error) };
+      const reason = reasonOf(error);
+      this.failed(reason);
+      return { source: 'fallback', family: 'none', fallbackReason: reason };
     }
   }
 
   /**
-   * Answers a short follow-up question about one problem. The server re-solves the problem itself, grounds the model in
-   * those verified steps, and shows the answer only if every fraction, number and equation in it checks out.
-   * Never cached: the question is learner text.
+   * Chooses WHICH reviewed help to show for a follow-up question. The server re-solves the problem itself, shows the model
+   * a menu of ids that exist for this problem, and accepts the reply only if validateSelection says every id is real and
+   * applicable. The result is a selection, never text. Never cached: the question is learner text.
    */
-  async ask(problem: Problem, question: string): Promise<AskResult> {
-    const solution = solve(problem);
+  async ask(problem: Problem, question: string, causes: readonly CauseId[] = []): Promise<AskResult> {
+    const ctx: HelpContext = { solution: solve(problem), causes };
     try {
-      const raw = await this.call(askPrompt(solution, question), ANSWER_JSON_SCHEMA);
-      const parsed = modelAnswerSchema.safeParse(safeJson(raw));
-      if (!parsed.success) return { source: 'fallback', fallbackReason: 'invalid_output' };
-      if (!verifyAiText(parsed.data.answer, solution).ok) return { source: 'fallback', fallbackReason: 'invalid_output' };
-      return { source: 'gemini', answer: parsed.data.answer };
+      const raw = await this.call(askPrompt(ctx, question), selectionJsonSchema(ctx.solution.steps.map((s) => s.id)));
+      const parsed = modelSelectionSchema.safeParse(safeJson(raw));
+      if (!parsed.success) throw new ModelFailure('malformed');
+      const checked = validateSelection(parsed.data, ctx);
+      if (!checked.ok) throw new ModelFailure('rejected');
+      this.accepted();
+      return { source: 'gemini', selection: checked.selection };
     } catch (error) {
-      return { source: 'fallback', fallbackReason: reasonOf(error) };
+      const reason = reasonOf(error);
+      this.failed(reason);
+      return { source: 'fallback', fallbackReason: reason };
     }
   }
 
-  /** Chooses a template and writes up to two sentences. Cached by family + template + hint level only. */
+  /** Picks one of the reviewed templates. Cached by family + template + hint level only. */
   explain(family: FamilyId, templateId: string, hintLevel: number): Promise<ExplanationResult> {
     const requested = findTemplate(family, templateId) ?? defaultTemplate(family);
     const key = `${family}|${requested.id}|${hintLevel}`;
@@ -141,18 +179,22 @@ export class AiService {
   }
 
   private async explainUncached(family: FamilyId, templateId: string, hintLevel: number): Promise<ExplanationResult> {
-    const fallback = (reason: FallbackReason): ExplanationResult => {
-      const template = findTemplate(family, templateId) ?? defaultTemplate(family);
-      return { source: 'fallback', templateId: template.id, sentences: fallbackSentences(template, hintLevel), fallbackReason: reason };
+    const fromTemplate = (id: string, source: AiSource, fallbackReason?: FallbackReason): ExplanationResult => {
+      const template = findTemplate(family, id) ?? defaultTemplate(family);
+      return { source, templateId: template.id, sentences: fallbackSentences(template, hintLevel), ...(fallbackReason === undefined ? {} : { fallbackReason }) };
     };
     try {
       const ids = TEMPLATES[family].map((t) => t.id);
-      const raw = await this.call(explainPrompt(family, templateId, hintLevel), explanationJsonSchema(ids));
+      const raw = await this.call(explainPrompt(family, templateId), explanationJsonSchema(ids));
       const parsed = modelExplanationSchema.safeParse(safeJson(raw));
-      if (!parsed.success || !ids.includes(parsed.data.templateId)) return fallback('invalid_output');
-      return { source: 'gemini', templateId: parsed.data.templateId, sentences: parsed.data.sentences };
+      if (!parsed.success) throw new ModelFailure('malformed');
+      if (!ids.includes(parsed.data.templateId)) throw new ModelFailure('rejected');
+      this.accepted();
+      return fromTemplate(parsed.data.templateId, 'gemini');
     } catch (error) {
-      return fallback(reasonOf(error));
+      const reason = reasonOf(error);
+      this.failed(reason);
+      return fromTemplate(templateId, 'fallback', reason);
     }
   }
 
@@ -176,6 +218,7 @@ export class AiService {
     return true;
   }
 
+  /** Calls the model once, plus one retry for transient errors only. Authentication and billing failures are never retried. */
   private async call(prompt: Prompt, schema: unknown): Promise<string> {
     const client = this.client;
     if (client === null) throw new ModelFailure('no_key');
@@ -183,17 +226,10 @@ export class AiService {
       if (!this.takeBudget()) throw new ModelFailure('budget');
       return withTimeout((signal) => client.generateJson(prompt, schema, signal), this.timeoutMs);
     };
-    try {
-      const raw = await attempt().catch((error: unknown) => {
-        if (error instanceof TransientModelError) return attempt();
-        throw error;
-      });
-      this.lastCall = 'ok';
-      return raw;
-    } catch (error) {
-      this.lastCall = 'failed';
+    return attempt().catch((error: unknown) => {
+      if (error instanceof TransientModelError) return attempt();
       throw error;
-    }
+    });
   }
 }
 
@@ -222,5 +258,7 @@ function safeJson(raw: string): unknown {
 }
 
 function reasonOf(error: unknown): FallbackReason {
-  return error instanceof ModelFailure ? error.reason : 'provider_error';
+  if (error instanceof ModelFailure) return error.reason;
+  if (error instanceof ModelCallError) return error.kind === 'provider' ? 'provider_error' : error.kind;
+  return 'provider_error';
 }

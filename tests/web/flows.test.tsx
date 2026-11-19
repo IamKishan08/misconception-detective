@@ -25,7 +25,7 @@ afterEach(() => {
 
 function Solve({ aiConfigured = false, onAiSource = () => undefined }: { aiConfigured?: boolean; onAiSource?: (s: 'gemini' | 'fallback') => void }) {
   const [draft, setDraft] = useState<Draft>({ problem: '', answer: '', working: '' });
-  return <SolveFlow draft={draft} onDraft={setDraft} aiConfigured={aiConfigured} onAiSource={onAiSource} />;
+  return <SolveFlow draft={draft} onDraft={setDraft} aiConfigured={aiConfigured} onAiSource={onAiSource} onHistory={() => undefined} />;
 }
 
 async function fill(user: ReturnType<typeof userEvent.setup>, problem: string, answer = '', working = '') {
@@ -47,7 +47,7 @@ describe('Solve my problem', () => {
     expect(screen.getByText(/Add 1\/2 and 1\/4/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: m.start }));
     expect(screen.getByRole('heading', { name: m.resultHeading })).toBeTruthy();
-    expect(screen.queryByLabelText(m.askLabel)).toBeNull();
+    expect(screen.getByLabelText(messages.help.label)).toBeTruthy();
     expect(fetch).not.toHaveBeenCalled();
   });
 
@@ -257,59 +257,123 @@ describe('Solve my problem', () => {
   });
 });
 
-describe('follow-up question with Gemini', () => {
+describe('Ask about this problem: AI selects, the engine explains', () => {
   const ok = (body: unknown) => ({ ok: true, json: async () => body });
+  const h = messages.help;
 
-  it('is offered only when Gemini is configured, shows a checked answer, and only then claims the AI worked', async () => {
-    const onAiSource = vi.fn();
-    vi.stubGlobal('fetch', vi.fn(async () => ok({ source: 'gemini', answer: 'We rewrite 1/2 as 2/4 so both are quarters.' })));
+  async function openProblem(user: ReturnType<typeof userEvent.setup>, aiConfigured: boolean, onAiSource = vi.fn()) {
+    render(<Solve aiConfigured={aiConfigured} onAiSource={onAiSource} />);
+    await fill(user, '1/2 + 1/4', '2/6');
+    await user.click(screen.getByRole('button', { name: m.check }));
+    return onAiSource;
+  }
+
+  it('without AI the question is matched by the app, labelled as built-in, and nothing is sent anywhere', async () => {
     const user = userEvent.setup();
-    render(<Solve aiConfigured onAiSource={onAiSource} />);
-    await fill(user, '1/2 + 1/4');
-    await user.click(screen.getByRole('button', { name: m.start }));
-    await user.type(screen.getByLabelText(m.askLabel), 'Why quarters?');
-    await user.click(screen.getByRole('button', { name: m.ask }));
-    expect(await screen.findByText(/We rewrite 1\/2 as 2\/4/)).toBeTruthy();
-    expect(screen.getByText(m.askChecked)).toBeTruthy();
+    await openProblem(user, false);
+    await user.type(screen.getByLabelText(h.label), 'Why do the denominators have to match?');
+    await user.click(screen.getByRole('button', { name: h.ask }));
+    expect(screen.getByText('Why the denominators have to match')).toBeTruthy();
+    expect(screen.getByText(/The denominator tells us the size of each piece/, { selector: '.help-card p' })).toBeTruthy();
+    expect(screen.getByText(h.origin.builtin)).toBeTruthy();
+    expect(screen.queryByText(h.origin.ai)).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('with AI, the model’s accepted choice is shown with built-in content and labelled as AI-selected', async () => {
+    const fetchMock = vi.fn(async () => ok({ source: 'gemini', selection: { intent: 'explain_concept', conceptId: 'multiply_both' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    const onAiSource = await openProblem(user, true);
+    await user.type(screen.getByLabelText(h.label), 'why times both?');
+    await user.click(screen.getByRole('button', { name: h.ask }));
+    expect(await screen.findByText('Why we multiply the top and the bottom by the same number')).toBeTruthy();
+    expect(screen.getByText(h.origin.ai)).toBeTruthy();
     expect(onAiSource).toHaveBeenCalledWith('gemini');
-    // Only the problem numbers and the question were sent: no working, no answer.
-    const [url, init] = vi.mocked(fetch).mock.calls[0] ?? [];
+    // Only the problem, the question and the mistake ids the app found were sent.
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('/api/ask');
-    expect(JSON.parse(String((init as RequestInit).body))).toEqual({
+    expect(JSON.parse(String(init.body))).toEqual({
       problem: { kind: 'arith', op: 'add', a: { n: 1, d: 2 }, b: { n: 1, d: 4 } },
-      question: 'Why quarters?',
+      question: 'why times both?',
+      causes: ['added_across'],
     });
   });
 
-  it('when the answer cannot be validated it says so, claims nothing, and the built-in help still works', async () => {
+  it('a model choice that does not apply to this problem is rejected in the browser too, and the built-in match is labelled as a fallback', async () => {
     const onAiSource = vi.fn();
-    vi.stubGlobal('fetch', vi.fn(async () => ok({ source: 'fallback', fallbackReason: 'invalid_output' })));
+    vi.stubGlobal('fetch', vi.fn(async () => ok({ source: 'gemini', selection: { intent: 'explain_concept', conceptId: 'invert_divisor' } })));
     const user = userEvent.setup();
-    render(<Solve aiConfigured onAiSource={onAiSource} />);
-    await fill(user, '1/2 + 1/4');
-    await user.click(screen.getByRole('button', { name: m.start }));
-    await user.type(screen.getByLabelText(m.askLabel), 'Why?');
-    await user.click(screen.getByRole('button', { name: m.ask }));
-    expect(await screen.findByText(m.askUnavailable)).toBeTruthy();
-    expect(screen.queryByText(m.askChecked)).toBeNull();
+    await openProblem(user, true, onAiSource);
+    await user.type(screen.getByLabelText(h.label), 'why do denominators match');
+    await user.click(screen.getByRole('button', { name: h.ask }));
+    expect(await screen.findByText(h.origin.fallback)).toBeTruthy();
+    expect(screen.queryByText(h.origin.ai)).toBeNull();
+    expect(screen.queryByText('Why we flip the fraction we divide by')).toBeNull();
+    expect(screen.getByText(h.unavailable)).toBeTruthy();
     expect(onAiSource).toHaveBeenCalledWith('fallback');
-    await user.click(screen.getByRole('button', { name: m.showAllSteps }));
-    expect(stepText().join('|')).toContain('Add the top numbers');
+    expect(onAiSource).not.toHaveBeenCalledWith('gemini');
   });
 
-  it('a network failure recovers: the button works again afterwards', async () => {
-    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError('offline')).mockResolvedValueOnce(ok({ source: 'gemini', answer: 'Quarters are the same size.' }));
-    vi.stubGlobal('fetch', fetchMock);
+  it('server-side fallbacks (rejected, quota, auth, timeout) all give one simple message and a useful built-in answer', async () => {
+    for (const reason of ['rejected', 'quota', 'auth', 'timeout', 'malformed']) {
+      vi.stubGlobal('fetch', vi.fn(async () => ok({ source: 'fallback', fallbackReason: reason })));
+      const user = userEvent.setup();
+      await openProblem(user, true);
+      await user.type(screen.getByLabelText(h.label), 'show me a picture');
+      await user.click(screen.getByRole('button', { name: h.ask }));
+      expect(await screen.findByText(h.unavailable)).toBeTruthy();
+      expect(screen.getByText(h.origin.fallback)).toBeTruthy();
+      expect(document.body.textContent).not.toContain(reason);
+      cleanup();
+    }
+  });
+
+  it('a missing key is reported as "not set up", not as a failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok({ source: 'fallback', fallbackReason: 'no_key' })));
     const user = userEvent.setup();
-    render(<Solve aiConfigured />);
-    await fill(user, '1/2 + 1/4');
-    await user.click(screen.getByRole('button', { name: m.start }));
-    await user.type(screen.getByLabelText(m.askLabel), 'Why?');
-    await user.click(screen.getByRole('button', { name: m.ask }));
-    expect(await screen.findByText(m.askUnavailable)).toBeTruthy();
-    expect((screen.getByRole('button', { name: m.ask }) as HTMLButtonElement).disabled).toBe(false);
-    await user.click(screen.getByRole('button', { name: m.ask }));
-    expect(await screen.findByText(/Quarters are the same size/)).toBeTruthy();
+    await openProblem(user, true);
+    await user.type(screen.getByLabelText(h.label), 'help me start');
+    await user.click(screen.getByRole('button', { name: h.ask }));
+    expect(await screen.findByText(h.notConfigured)).toBeTruthy();
+  });
+
+  it('a network failure recovers: the built-in help appears and the button works again', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('offline'))));
+    const user = userEvent.setup();
+    await openProblem(user, true);
+    await user.type(screen.getByLabelText(h.label), 'show me a picture');
+    await user.click(screen.getByRole('button', { name: h.ask }));
+    expect(await screen.findByText(h.origin.fallback)).toBeTruthy();
+    expect((screen.getByRole('button', { name: h.ask }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('different questions give different explanations', async () => {
+    const user = userEvent.setup();
+    await openProblem(user, false);
+    const box = screen.getByLabelText(h.label);
+    await user.type(box, 'Why do the denominators have to match?');
+    await user.click(screen.getByRole('button', { name: h.ask }));
+    const first = document.querySelector('.help-card h4')?.textContent;
+    await user.clear(box);
+    await user.type(box, 'why does the bottom number stay the same');
+    await user.click(screen.getByRole('button', { name: h.ask }));
+    const second = document.querySelector('.help-card h4')?.textContent;
+    expect(first).toBe('Why the denominators have to match');
+    expect(second).toBe('Why the denominator stays the same when adding or subtracting');
+    await user.clear(box);
+    await user.type(box, 'what is the weather');
+    await user.click(screen.getByRole('button', { name: h.ask }));
+    expect(document.querySelector('.help-card h4')?.textContent).toBe('That is outside what I can help with here');
+  });
+
+  it('explains a possible mistake only because the app found it, and only tentatively', async () => {
+    const user = userEvent.setup();
+    await openProblem(user, false);
+    await user.type(screen.getByLabelText(h.label), 'why is my answer wrong?');
+    await user.click(screen.getByRole('button', { name: h.ask }));
+    expect(screen.getByText(/One possibility is adding the tops and the bottoms separately/)).toBeTruthy();
+    expect(screen.getByText(/cannot show how it was reached/)).toBeTruthy();
   });
 
   it('repeated clicks send one request, and leaving the view while it is pending applies nothing', async () => {
@@ -321,43 +385,47 @@ describe('follow-up question with Gemini', () => {
     vi.stubGlobal('fetch', fetchMock);
     const user = userEvent.setup();
     const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const view = render(<Solve aiConfigured />);
+    const onAiSource = vi.fn();
+    const view = render(<Solve aiConfigured onAiSource={onAiSource} />);
     await fill(user, '1/2 + 1/4');
     await user.click(screen.getByRole('button', { name: m.start }));
-    await user.type(screen.getByLabelText(m.askLabel), 'Why?');
-    const ask = screen.getByRole('button', { name: m.ask });
+    await user.type(screen.getByLabelText(h.label), 'Why?');
+    const ask = screen.getByRole('button', { name: h.ask });
     await user.click(ask);
     await user.click(ask);
     await user.keyboard('{Enter}');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole('button', { name: m.asking })).toBeTruthy();
+    expect(screen.getByRole('button', { name: h.asking })).toBeTruthy();
 
     view.unmount();
     await act(async () => {
-      release(ok({ source: 'gemini', answer: 'Late answer.' }));
+      release(ok({ source: 'gemini', selection: { intent: 'help_start' } }));
       await Promise.resolve();
     });
     expect(errors).not.toHaveBeenCalled();
+    expect(onAiSource).not.toHaveBeenCalled();
     errors.mockRestore();
   });
 
-  it('a new problem while a question is pending discards the old answer', async () => {
+  it('a new problem while a question is pending discards the old answer and does not claim AI worked', async () => {
     let release: (value: unknown) => void = () => undefined;
     vi.stubGlobal('fetch', vi.fn(() => new Promise((resolve) => (release = resolve))));
     const user = userEvent.setup();
-    render(<Solve aiConfigured />);
+    const onAiSource = vi.fn();
+    render(<Solve aiConfigured onAiSource={onAiSource} />);
     await fill(user, '1/2 + 1/4');
     await user.click(screen.getByRole('button', { name: m.start }));
-    await user.type(screen.getByLabelText(m.askLabel), 'Why?');
-    await user.click(screen.getByRole('button', { name: m.ask }));
+    await user.type(screen.getByLabelText(h.label), 'Why?');
+    await user.click(screen.getByRole('button', { name: h.ask }));
     await fill(user, '3/4 - 1/6');
     await user.click(screen.getByRole('button', { name: m.start }));
     await act(async () => {
-      release(ok({ source: 'gemini', answer: 'Old problem answer.' }));
+      release(ok({ source: 'gemini', selection: { intent: 'help_start' } }));
       await Promise.resolve();
     });
-    expect(screen.queryByText(/Old problem answer/)).toBeNull();
-    expect((screen.getByRole('button', { name: m.ask }) as HTMLButtonElement).disabled).toBe(true); // empty box, not stuck loading
+    expect(document.querySelector('.help-card')).toBeNull();
+    expect(onAiSource).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: h.ask }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
@@ -375,6 +443,8 @@ function Practice({ onChange, initial }: { onChange: (s: LearnerState) => void; 
           setState(s);
         }}
         onExplanationSource={() => undefined}
+        onHistory={() => undefined}
+        aiConfigured={false}
       />
     </>
   );
@@ -577,7 +647,7 @@ describe('stale asynchronous updates', () => {
     await user.click(screen.getByRole('button', { name: messages.nav.practise }));
     const saved = window.localStorage.getItem('misconception-detective:v1');
     await submitWithReason(user);
-    await user.click(screen.getByRole('button', { name: messages.nav.teacher }));
+    await user.click(screen.getByRole('button', { name: messages.nav.progress }));
     const afterLeave = window.localStorage.getItem('misconception-detective:v1');
     await act(async () => {
       for (const call of calls) if (call.url === '/api/interpret') call.release(ok({ source: 'gemini', family: 'F1' }));

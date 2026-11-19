@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FAMILIES } from '../../engine/families/index.js';
+import type { HistoryEvent } from '../../engine/history.js';
+import { questionToProblem } from '../../engine/solver/fromQuestion.js';
 import {
   continueFromReview,
   hintLevel,
   markSolutionViewed,
   requestHint,
+  similarQuestion,
   startFamily,
   submitAnswer,
   tryAgain,
@@ -23,6 +26,10 @@ interface Props {
   onChange: (state: LearnerState) => void;
   /** Reports where the latest explanation came from, so the header badge reflects reality. */
   onExplanationSource: (source: Explanation['source']) => void;
+  /** Records real activity for My progress. */
+  onHistory: (event: HistoryEvent) => void;
+  /** True when a Gemini key is configured on the server. */
+  aiConfigured: boolean;
 }
 
 /** A short banner above the next question: the previous answer was correct, or could not be read. */
@@ -34,7 +41,7 @@ interface Banner {
   invalidReason?: InvalidReason;
 }
 
-export function StudentFlow({ state, onChange, onExplanationSource }: Props) {
+export function StudentFlow({ state, onChange, onExplanationSource, onHistory, aiConfigured }: Props) {
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<Banner | null>(null);
   const [explanation, setExplanation] = useState<{ key: string; value: Explanation } | null>(null);
@@ -126,6 +133,13 @@ export function StudentFlow({ state, onChange, onExplanationSource }: Props) {
       } else {
         setBanner(null);
       }
+      if (result.outcome !== 'invalid_input' && now.step.kind === 'question') {
+        const key = `${question.id}@${now.step.run.started}`;
+        const problem = questionToProblem(question);
+        onHistory({ type: 'check', key, source: 'practice', problem, correct: result.outcome === 'correct', answer: evaluation.valid ? evaluation.display : '' });
+        // Support the engine showed by itself (repeated mistakes) counts as the solution having been viewed.
+        if (result.state.step.kind === 'review' && result.state.step.run.solutionViewed) onHistory({ type: 'help', key, source: 'practice', problem, kind: 'solution' });
+      }
       latest.current = result.state;
       onChange(result.state);
     } finally {
@@ -136,6 +150,14 @@ export function StudentFlow({ state, onChange, onExplanationSource }: Props) {
         setBusy(false);
       }
     }
+  }
+
+  /** Hint or solution requested on the question or review that is on screen. */
+  function support(kind: 'hint' | 'solution') {
+    const current = state.step;
+    if (current.kind === 'finished') return;
+    onHistory({ type: 'help', key: `${current.question.id}@${current.run.started}`, source: 'practice', problem: questionToProblem(current.question), kind });
+    change(kind === 'hint' ? requestHint(state) : markSolutionViewed(state));
   }
 
   function change(next: LearnerState) {
@@ -174,8 +196,9 @@ export function StudentFlow({ state, onChange, onExplanationSource }: Props) {
           busy={busy}
           focusOnMount={step.run.tries > 0}
           onSubmit={(s) => void handleSubmit(s)}
-          onHint={() => change(requestHint(state))}
-          onExplain={() => change(markSolutionViewed(state))}
+          onHint={() => support('hint')}
+          onExplain={() => support('solution')}
+          onSimilar={() => change(similarQuestion(state))}
         />
       )}
       {review !== null && (
@@ -184,9 +207,12 @@ export function StudentFlow({ state, onChange, onExplanationSource }: Props) {
           step={review}
           explanation={shownExplanation}
           onTryAgain={() => change(tryAgain(state))}
-          onHint={() => change(requestHint(state))}
-          onExplain={() => change(markSolutionViewed(state))}
+          onHint={() => support('hint')}
+          onExplain={() => support('solution')}
+          onSimilar={() => change(similarQuestion(state))}
           onContinue={() => change(continueFromReview(state))}
+          aiConfigured={aiConfigured}
+          onAiSource={onExplanationSource}
         />
       )}
       {step.kind === 'finished' && (

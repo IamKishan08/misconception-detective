@@ -1,4 +1,4 @@
-import { DEMO_CONTEXTS, DEMO_SEED, buildSampleLearners, runScript } from '../../src/engine/demo.js';
+import { DEMO_CONTEXTS, DEMO_SEED, runScript } from '../../src/engine/demo.js';
 import { FAMILIES } from '../../src/engine/families/index.js';
 import {
   MAX_ATTEMPTS_PER_FAMILY,
@@ -8,11 +8,11 @@ import {
   isIndependent,
   markSolutionViewed,
   requestHint,
+  similarQuestion,
   submitAnswer,
   tryAgain,
   type LearnerState,
 } from '../../src/engine/progression.js';
-import { groupByFamily } from '../../src/engine/teacher.js';
 import type { Answer, Question } from '../../src/engine/types.js';
 
 function current(state: LearnerState): Question {
@@ -310,17 +310,30 @@ describe('assisted answers are kept separate from independent evidence', () => {
   });
 });
 
-describe('teacher grouping', () => {
-  it('groups learners by family with observed attempts, keeping samples separate', () => {
-    const real = runScript(DEMO_SEED, ['wrong', 'wrong']).state;
-    const samples = buildSampleLearners().map((s) => ({ ...s, sample: true }));
-    const groups = groupByFamily([{ id: 'you', displayName: 'You', sample: false, state: real }, ...samples]);
-    const f1 = groups.find((g) => g.family === 'F1');
-    const you = f1?.needsReteach.find((e) => e.learnerId === 'you');
-    expect(you?.status).toBe('likely');
-    expect(you?.observed.map((a) => a.stage)).toEqual(['item', 'followup']);
-    expect(groups.flatMap((g) => g.needsReteach).some((e) => e.sample)).toBe(true);
-    // Building samples never changes the real learner.
-    expect(real.families.F1.attempts).toHaveLength(2);
+describe('"Give me a similar problem" in guided practice', () => {
+  it('gives a different question of the same kind, only by the learner\u2019s choice, and records no evidence', () => {
+    const answered = submitAnswer(createLearner(7), unmatched);
+    const review = reviewed(answered.state);
+    const similar = similarQuestion(answered.state);
+    const next = current(similar);
+    expect(next.id).not.toBe(review.question.id);
+    expect(next).toMatchObject({ family: review.question.family, stage: review.question.stage, difficulty: review.question.difficulty });
+    // The wrong answer already counted once; moving to a similar question adds nothing and resets support for the new question.
+    expect(similar.families.F1.attempts).toEqual(answered.state.families.F1.attempts);
+    expect(similar.families.F1.status).toBe(answered.state.families.F1.status);
+    expect(similar.step).toMatchObject({ kind: 'question', run: { hints: 0, solutionViewed: false, tries: 0, planned: null } });
+  });
+
+  it('also works from an unanswered question and never repeats it', () => {
+    const state = createLearner(11);
+    const next = current(similarQuestion(state));
+    expect(next.id).not.toBe(current(state).id);
+  });
+
+  it('each question shown has its own run id, so history cannot merge two attempts', () => {
+    const a = createLearner(3);
+    const b = similarQuestion(a);
+    if (a.step.kind !== 'question' || b.step.kind !== 'question') throw new Error('expected questions');
+    expect(a.step.run.started).not.toBe(b.step.run.started);
   });
 });

@@ -18,7 +18,7 @@ const staticDir = process.env.STATIC_DIR ?? path.resolve(here, '../../web');
 
 const port = Number.parseInt(process.env.PORT ?? '', 10) || DEFAULT_PORT;
 const server = createApp({ ai, staticDir }).listen(port, '0.0.0.0', () => {
-  console.log(JSON.stringify({ severity: 'INFO', message: 'listening', port, explanations: ai.live ? 'live' : 'offline', model: ai.live ? model : null }));
+  console.log(JSON.stringify({ severity: 'INFO', message: 'listening', port, ai: ai.live ? 'configured' : 'not_configured', model: ai.live ? model : null }));
 });
 
 function shutdown(signal: string): void {

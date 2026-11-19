@@ -82,8 +82,12 @@ test.describe('Solve my problem', () => {
     await result.getByRole('button', { name: 'Why this step?' }).click();
     await expect(result.getByText(/Because pieces can only be added/)).toBeVisible();
     await expect(result.locator('figure.visual').first()).toBeVisible();
-    // No AI box without a Gemini key.
-    await expect(page.getByLabel(/Ask a short question/)).toHaveCount(0);
+    // Ask about the problem: with no Gemini key the app matches the question itself and says so.
+    await result.getByLabel('Ask about this problem').fill('Why do the denominators have to match?');
+    await result.getByRole('button', { name: 'Ask', exact: true }).click();
+    await expect(result.getByRole('heading', { name: 'Why the denominators have to match' })).toBeVisible();
+    await expect(result.getByText(/Built-in help: matched to your question by the app/)).toBeVisible();
+    await expect(result.getByText(/AI-selected help: Gemini chose/)).toHaveCount(0);
 
     await result.getByRole('button', { name: 'Give me a similar problem' }).first().click();
     await expect(problem).not.toHaveValue('1/2 + 1/4');
@@ -174,11 +178,11 @@ test.describe('Solve my problem', () => {
   });
 });
 
-test.describe('Guided practice', () => {
+test.describe('Practise', () => {
   test('wrong answer keeps the question, offers three ways to get help, and completes the original flow', async ({ page }) => {
     const errors = watchErrors(page);
     await page.goto('/');
-    await page.getByRole('button', { name: 'Guided practice' }).click();
+    await page.getByRole('button', { name: 'Practise', exact: true }).click();
     await expect(page.getByText('Not sure where to start?')).toBeVisible();
 
     // Item: the "add across" answer → possible idea, question stays on screen.
@@ -215,31 +219,39 @@ test.describe('Guided practice', () => {
     await page.getByRole('button', { name: 'Try one with new numbers' }).click();
     await expect(page.getByText('New numbers').first()).toBeVisible();
 
-    // Teacher view: honest about its limits, shows this device's attempts, no made-up students unless asked.
-    await page.getByRole('button', { name: 'Teacher view' }).click();
-    await expect(page.getByText(/not a class roster/)).toBeVisible();
-    await expect(page.locator('.badge')).toHaveCount(0);
-    const you = page.getByRole('row', { name: /You \(this device\)/ });
-    await expect(you).toContainText('Likely misconception');
-    await expect(you).toContainText('matched pattern');
-    await expect(you).toContainText('help used');
+    // My progress: this student's real activity only, each outcome kept apart, no sample data.
+    await page.getByRole('button', { name: 'My progress' }).click();
+    await expect(page.getByRole('heading', { name: 'My progress', level: 2 })).toBeVisible();
+    await expect(page.getByText(/not a score and not a measure/)).toBeVisible();
+    // The question and the check question are two separate attempts, both answered wrongly so far.
+    await expect(page.locator('.history-item')).toHaveCount(2);
+    await expect(page.locator('.history-item .outcome-badge')).toHaveText(['Not yet correct', 'Not yet correct']);
+    await expect(page.getByText(/teacher|sample|made-up/i)).toHaveCount(0);
+    await page.getByRole('button', { name: 'Review the explanation' }).first().click();
+    await expect(page.locator('.history-item .step').first()).toBeVisible();
 
-    // Progress survives a reload, and reset clears it.
+    // Progress survives a reload.
     await page.reload();
-    await page.getByRole('button', { name: 'Teacher view' }).click();
-    await expect(page.getByRole('row', { name: /You \(this device\)/ })).toContainText('Likely misconception');
-    await page.getByRole('button', { name: 'Guided practice' }).click();
+    await page.getByRole('button', { name: 'My progress' }).click();
+    await expect(page.locator('.history-item')).toHaveCount(2);
+
+    // Settings: deleting practice progress asks first.
+    await page.getByRole('button', { name: 'Settings' }).click();
     page.once('dialog', (dialog) => void dialog.accept());
-    await page.getByRole('button', { name: 'Reset my progress' }).click();
-    await page.getByRole('button', { name: 'Teacher view' }).click();
-    await expect(page.getByRole('row', { name: /You \(this device\)/ })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Reset my practice progress' }).click();
+    await expect(page.getByText('Practice progress cleared. Starting fresh.')).toBeAttached();
+    page.once('dialog', (dialog) => void dialog.accept());
+    await page.locator('#settings-panel').getByRole('button', { name: 'Delete my activity history' }).click();
+    await page.getByRole('button', { name: 'Close settings' }).click();
+    await expect(page.locator('.history-item')).toHaveCount(0);
+    await expect(page.getByText('Nothing here yet')).toBeVisible();
 
     expect(errors).toEqual([]);
   });
 
   test('the whole path can be completed independently, and it is keyboard operable', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: 'Guided practice' }).click();
+    await page.getByRole('button', { name: 'Practise', exact: true }).click();
     await page.getByLabel('Top number (numerator)').focus();
     // Correct answers, computed from the question on screen: item then transfer → idea secure.
     for (let i = 0; i < 2; i += 1) {
@@ -268,6 +280,7 @@ test.describe('Theme, motion and contrast', () => {
 
   test('a light, dark or system theme is available and remembered', async ({ page }) => {
     await page.goto('/');
+    await page.getByRole('button', { name: 'Settings' }).click();
     const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     await page.getByLabel('Theme').selectOption('light');
     const light = await bg();
@@ -276,6 +289,7 @@ test.describe('Theme, motion and contrast', () => {
     const dark = await bg();
     expect(dark).not.toBe(light);
     await page.reload();
+    await page.getByRole('button', { name: 'Settings' }).click();
     await expect(page.getByLabel('Theme')).toHaveValue('dark');
     expect(await bg()).toBe(dark);
     await page.getByLabel('Theme').selectOption('system');
@@ -304,13 +318,23 @@ test.describe('Theme, motion and contrast', () => {
       test.use({ bypassCSP: true });
       test(`no accessibility violations, including colour contrast, in the ${theme} theme`, async ({ page }) => {
       await page.goto('/');
+      await page.getByRole('button', { name: 'Settings' }).click();
       await page.getByLabel('Theme').selectOption(theme);
+      await expect(await axeViolations(page)).toEqual([]);
+      await page.getByRole('button', { name: 'Close settings' }).click();
       await page.getByLabel('Your fraction problem').fill('3/4 - 1/6');
       await page.getByLabel('Your answer (optional)').fill('2/3');
       await page.getByRole('button', { name: 'Check my working' }).click();
       await page.getByRole('button', { name: 'Why this step?' }).click();
+      await page.getByLabel('Ask about this problem').fill('why do the denominators match');
+      await page.getByRole('button', { name: 'Ask', exact: true }).click();
+      // Contrast is only meaningful once the gentle reveal animation has finished.
+      await expect(page.locator('.help-card')).toHaveCSS('opacity', '1');
+      await expect(page.locator('.step').last()).toHaveCSS('opacity', '1');
       await expect(await axeViolations(page)).toEqual([]);
-      await page.getByRole('button', { name: 'Guided practice' }).click();
+      await page.getByRole('button', { name: 'My progress' }).click();
+      await expect(await axeViolations(page)).toEqual([]);
+      await page.getByRole('button', { name: 'Practise', exact: true }).click();
       await expect(await axeViolations(page)).toEqual([]);
     });
     });

@@ -327,6 +327,45 @@ thead th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em;
 .activity { background: var(--surface-alt); border-radius: 10px; padding: 0.1rem 0.9rem 0.5rem; margin-top: 0.8rem; }
 .reset-row { margin-top: 1.2rem; text-align: center; }
 
+
+/* Help panel: who chose the explanation is always visible */
+.help-card { margin-top: 0.6rem; padding: 0.6rem 0.9rem; background: var(--surface-alt); border-radius: 12px; border-left: 4px solid var(--border-strong); }
+.help-card.origin-ai { border-left-color: var(--ok); }
+.help-card h4 { margin: 0.2rem 0; }
+.origin-badge { display: inline-block; margin: 0 0 0.2rem; padding: 0.1rem 0.6rem; border-radius: 999px; font-size: 0.82rem; font-weight: 600; background: var(--surface); border: 1px solid var(--border-strong); color: var(--muted); }
+.origin-badge.ai { color: var(--ok); border-color: var(--ok); }
+.next-help ul { list-style: none; padding: 0; margin: 0.2rem 0 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.next-help .chip-button { text-align: left; }
+
+/* Settings */
+.settings { margin-bottom: 0.75rem; }
+.settings-head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+.settings-head h2 { margin: 0; }
+.settings-grid { display: grid; gap: 1rem; }
+.settings h3 { margin-top: 0.75rem; }
+.settings-button { min-height: 40px; }
+.danger { border-color: var(--bar-wrong); color: var(--warn); }
+
+/* My progress */
+.progress { display: grid; gap: 0.6rem; }
+.progress .card { margin: 0; }
+.empty-state { background: var(--surface-alt); border-radius: 10px; padding: 0.4rem 1rem 0.8rem; }
+.revisit { margin: 0.2rem 0; padding-left: 1.2rem; }
+.history { list-style: none; padding: 0; margin: 0.4rem 0; display: grid; gap: 0.6rem; }
+.history-item { border: 1px solid var(--border); border-radius: 12px; padding: 0.5rem 0.8rem; background: var(--surface); }
+.history-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.history-head .expression { font-size: 1.4rem; margin: 0.2rem 0; }
+.outcome-badge { margin: 0; padding: 0.1rem 0.7rem; border-radius: 999px; font-size: 0.85rem; font-weight: 700; border: 1.5px solid; }
+.outcome-independent { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); }
+.outcome-retry, .outcome-with_help { color: var(--text); border-color: var(--border-strong); background: var(--surface-alt); }
+.outcome-incorrect { color: var(--warn); border-color: var(--warn); background: var(--warn-bg); }
+.outcome-explored { color: var(--muted); border-color: var(--border-strong); background: var(--surface); }
+.history-item .solution { margin-top: 0.5rem; }
+
+@media (min-width: 62rem) {
+  .settings-grid { grid-template-columns: 1fr 1.4fr; gap: 1.5rem; }
+}
+
 /* Motion: gentle reveal, removed entirely for people who ask for less motion */
 @keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .reveal { animation: reveal 0.28s ease-out both; }

@@ -22,6 +22,7 @@ interface Props {
   onSubmit: (submission: Submission) => void;
   onHint: () => void;
   onExplain: () => void;
+  onSimilar: () => void;
   /** Put the cursor in the first answer box (used when coming back to the same question to try again). */
   focusOnMount?: boolean;
 }
@@ -98,7 +99,7 @@ function choiceLabel(question: Question, id: ChoiceId) {
   return null;
 }
 
-export function QuestionCard({ question, run, busy, onSubmit, onHint, onExplain, focusOnMount = false }: Props) {
+export function QuestionCard({ question, run, busy, onSubmit, onHint, onExplain, onSimilar, focusOnMount = false }: Props) {
   const ids = useId();
   const [numerator, setNumerator] = useState('');
   const [denominator, setDenominator] = useState('');
@@ -200,6 +201,7 @@ export function QuestionCard({ question, run, busy, onSubmit, onHint, onExplain,
             <button type="button" className="secondary" onClick={onHint}>{run.hints === 0 ? m.hint : m.anotherHint}</button>
           )}
           {!run.solutionViewed && <button type="button" className="secondary" onClick={onExplain}>{m.explain}</button>}
+          <button type="button" className="secondary" onClick={onSimilar}>{m.similar}</button>
         </div>
         {run.hints > 0 && (
           <ol className="hint-list">

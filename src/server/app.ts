@@ -85,7 +85,7 @@ export function createApp(options: AppOptions) {
   api.post('/ask', async (req, res) => {
     const body = parseBody(askRequestSchema, req, res);
     if (body === null) return;
-    res.json(await options.ai.ask(body.problem, body.question));
+    res.json(await options.ai.ask(body.problem, body.question, body.causes ?? []));
   });
 
   api.use((_req, res) => {

@@ -60,6 +60,8 @@ export interface FamilyProgress {
 
 /** Support the learner has used on the question currently on screen. Carried through retries. */
 export interface Run {
+  /** Counter value when this question was shown: with the question id it identifies this attempt run, so history never double counts. */
+  readonly started: number;
   readonly hints: number;
   readonly solutionViewed: boolean;
   /** Wrong answers already given to this question. */
@@ -136,8 +138,8 @@ function seenIds(progress: FamilyProgress): Set<string> {
   return new Set(progress.attempts.map((a) => a.question.id));
 }
 
-export function blankRun(): Run {
-  return { hints: 0, solutionViewed: false, tries: 0, planned: null };
+export function blankRun(started = 0): Run {
+  return { started, hints: 0, solutionViewed: false, tries: 0, planned: null };
 }
 
 /** True when nothing but the learner's own thinking went into the answer being given. */
@@ -145,15 +147,17 @@ export function isIndependent(run: Run): boolean {
   return run.hints === 0 && !run.solutionViewed && run.tries === 0;
 }
 
-function nextQuestion(state: LearnerState, family: FamilyId, stage: Stage, difficulty: Difficulty): { question: Question; counter: number } {
+function nextQuestion(state: LearnerState, family: FamilyId, stage: Stage, difficulty: Difficulty, avoid?: string): { question: Question; counter: number } {
   const rng = createRng(deriveSeed(state.seedBase, state.counter));
-  const question = generateQuestion(family, stage, difficulty, rng, seenIds(state.families[family]));
+  const seen = seenIds(state.families[family]);
+  if (avoid !== undefined) seen.add(avoid);
+  const question = generateQuestion(family, stage, difficulty, rng, seen);
   return { question, counter: state.counter + 1 };
 }
 
-function withQuestion(state: LearnerState, family: FamilyId, stage: Stage, difficulty: Difficulty): LearnerState {
-  const { question, counter } = nextQuestion(state, family, stage, difficulty);
-  return { ...state, counter, activeFamily: family, step: { kind: 'question', question, run: blankRun() } };
+function withQuestion(state: LearnerState, family: FamilyId, stage: Stage, difficulty: Difficulty, avoid?: string): LearnerState {
+  const { question, counter } = nextQuestion(state, family, stage, difficulty, avoid);
+  return { ...state, counter, activeFamily: family, step: { kind: 'question', question, run: blankRun(state.counter) } };
 }
 
 export function createLearner(seedBase: number): LearnerState {
@@ -317,6 +321,17 @@ export function continueFromReview(state: LearnerState): LearnerState {
 function withAutoSupport(run: Run, outcome: AttemptRecord['outcome']): Run {
   if (outcome === 'correct' || run.solutionViewed) return run;
   return run.planned === 'show_explanation' || needsProactiveSupport(run) ? { ...run, solutionViewed: true } : run;
+}
+
+/**
+ * "Give me a similar problem" in guided practice: a different question of the same kind (same idea, stage and difficulty).
+ * It records nothing: evidence from the current question stays as it was, and the learner chose to move on.
+ */
+export function similarQuestion(state: LearnerState): LearnerState {
+  const step = state.step;
+  if (step.kind === 'finished') return state;
+  const { question } = step;
+  return withQuestion(state, question.family, question.stage, question.difficulty, question.id);
 }
 
 /** True once repeated wrong answers mean support should be shown rather than only offered. */

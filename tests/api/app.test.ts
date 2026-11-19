@@ -5,7 +5,7 @@ import type { ModelClient } from '../../src/ai/modelClient.js';
 import { createApp } from '../../src/server/app.js';
 
 const fakeClient: ModelClient = {
-  generateJson: async () => JSON.stringify({ templateId: 'F1.common_parts', sentences: ['Cut both bars into equal parts.'] }),
+  generateJson: async () => JSON.stringify({ templateId: 'F1.common_parts' }),
 };
 const offlineApp = () => createApp({ ai: new AiService({ client: null }) });
 const validExplain = { family: 'F1', templateId: 'F1.common_parts', hintLevel: 0 };

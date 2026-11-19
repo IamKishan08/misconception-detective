@@ -1,9 +1,12 @@
 /** Versioned localStorage wrapper. All learner data stays on this device. */
 import { z } from 'zod';
+import { problemSchema } from '../ai/schemas.js';
+import { MAX_ANSWER_CHARS, MAX_ENTRIES, emptyHistory, historyFromLearner, type History } from '../engine/history.js';
 import { createLearner, type LearnerState } from '../engine/progression.js';
 
 const STORAGE_KEY = 'misconception-detective:v1';
 const SETTINGS_KEY = 'misconception-detective:settings:v1';
+const HISTORY_KEY = 'misconception-detective:history:v1';
 
 // Structural check of stored state. Anything unexpected (old version, tampering) starts a fresh learner.
 const rationalSchema = z.object({ n: z.number().int().min(0), d: z.number().int().min(1) });
@@ -36,12 +39,13 @@ const attemptSchema = z.object({
   reasonId: z.enum(['added_tops_bottoms', 'bigger_bottom_bigger', 'changed_one_number', 'counted_parts', 'not_sure']).nullable(),
 });
 const runSchema = z.object({
+  started: z.number().int().min(0).default(0),
   hints: z.number().int().min(0).max(5),
   solutionViewed: z.boolean(),
   tries: z.number().int().min(0),
   planned: z.enum(['retry_same', 'ask_followup', 'show_explanation', 'ask_another_item', 'ask_transfer', 'ask_harder_transfer', 'next_family', 'all_done']).nullable(),
 });
-const blankRunValue = { hints: 0, solutionViewed: false, tries: 0, planned: null } as const;
+const blankRunValue = { started: 0, hints: 0, solutionViewed: false, tries: 0, planned: null } as const;
 const progressSchema = z.object({
   status: z.enum(['not_started', 'checking', 'possible', 'likely', 'improving', 'secure']),
   attempts: z.array(attemptSchema).max(50),
@@ -76,11 +80,11 @@ export const THEME_CHOICES = ['system', 'light', 'dark'] as const;
 export type ThemeChoice = (typeof THEME_CHOICES)[number];
 
 export interface Settings {
-  showSamples: boolean;
   theme: ThemeChoice;
 }
-const settingsSchema = z.object({ showSamples: z.boolean().default(false), theme: z.enum(THEME_CHOICES).default('system') });
-const DEFAULT_SETTINGS: Settings = { showSamples: false, theme: 'system' };
+// Older versions also stored a sample-learner switch; unknown keys are ignored.
+const settingsSchema = z.object({ theme: z.enum(THEME_CHOICES).default('system') });
+const DEFAULT_SETTINGS: Settings = { theme: 'system' };
 
 function randomSeed(): number {
   const buf = new Uint32Array(1);
@@ -94,6 +98,14 @@ function readJson(key: string): unknown {
     return raw === null ? null : JSON.parse(raw);
   } catch {
     return null;
+  }
+}
+
+function hasStored(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) !== null;
+  } catch {
+    return false;
   }
 }
 
@@ -153,4 +165,57 @@ export function applyTheme(theme: ThemeChoice): void {
   const root = document.documentElement;
   if (theme === 'system') root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', theme);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Activity history for "My progress": versioned, validated on load, bounded, and free of free-text working or questions.
+
+const historyEntrySchema = z.object({
+  key: z.string().min(1).max(80),
+  source: z.enum(['solve', 'practice']),
+  topic: z.enum(['add', 'sub', 'mul', 'div', 'compare', 'equivalent']),
+  problem: problemSchema,
+  at: z.number().int().min(0).nullable(),
+  wrong: z.number().int().min(0).max(1000),
+  hint: z.boolean(),
+  solution: z.boolean(),
+  correct: z.boolean(),
+  answer: z.string().max(MAX_ANSWER_CHARS).nullable(),
+});
+const historySchema = z.object({ version: z.literal(1), entries: z.array(historyEntrySchema).max(MAX_ENTRIES) });
+
+/**
+ * Loads history. If none was ever saved, builds it from existing practice progress so earlier work is kept. If something is
+ * saved but invalid, starts empty rather than guessing. An empty saved history stays empty (deleted history is not rebuilt).
+ */
+export function loadHistory(learner: LearnerState): History {
+  const raw = readJson(HISTORY_KEY);
+  if (raw === null && !hasStored(HISTORY_KEY)) {
+    const migrated = historyFromLearner(learner);
+    saveHistory(migrated);
+    return migrated;
+  }
+  const parsed = historySchema.safeParse(raw);
+  return parsed.success ? parsed.data : emptyHistory();
+}
+
+/** Returns false when the browser refuses storage (private mode, quota full). */
+export function saveHistory(history: History): boolean {
+  return writeJson(HISTORY_KEY, history);
+}
+
+/** Deletes the history. An empty history is saved so it is not rebuilt from practice progress. */
+export function clearHistory(): History {
+  const empty = emptyHistory();
+  saveHistory(empty);
+  return empty;
+}
+
+/** Removes everything this app stored on the device. */
+export function clearAllData(): void {
+  try {
+    for (const key of [STORAGE_KEY, SETTINGS_KEY, HISTORY_KEY]) window.localStorage.removeItem(key);
+  } catch {
+    // Storage unavailable: nothing to remove.
+  }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AiService } from '../../src/ai/service.js';
-import { TransientModelError, type ModelClient } from '../../src/ai/modelClient.js';
+import { AiService, type FallbackReason } from '../../src/ai/service.js';
+import { ModelCallError, TransientModelError, classifyApiError, type ModelClient } from '../../src/ai/modelClient.js';
 import type { Prompt } from '../../src/ai/prompts.js';
 import { TEMPLATES, findTemplate, fallbackSentences } from '../../src/ai/templates.js';
 import { createLearner, submitAnswer } from '../../src/engine/progression.js';
@@ -15,122 +15,166 @@ function fakeClient(impl: Gen) {
   return { client, generateJson };
 }
 
-const good = (templateId = 'F1.common_parts') =>
-  JSON.stringify({ templateId, sentences: ['Cut both bars into equal parts first.', 'Then count the parts together.'] });
+const pick = (templateId = 'F1.common_parts') => JSON.stringify({ templateId });
+const quiet = () => undefined;
 
-describe('AiService.explain', () => {
-  it('passes valid model output through', async () => {
-    const { client } = fakeClient(async () => good('F1.size_check'));
-    const r = await new AiService({ client }).explain('F1', 'F1.common_parts', 0);
-    expect(r).toEqual({
-      source: 'gemini',
-      templateId: 'F1.size_check',
-      sentences: ['Cut both bars into equal parts first.', 'Then count the parts together.'],
-    });
+describe('AiService.explain: the model only picks a reviewed template and writes no text', () => {
+  it('passes a valid template choice through, with the reviewed sentences for the hint level', async () => {
+    const { client } = fakeClient(async () => pick('F1.size_check'));
+    const r = await new AiService({ client }).explain('F1', 'F1.common_parts', 1);
+    expect(r.source).toBe('gemini');
+    expect(r.templateId).toBe('F1.size_check');
+    expect(r.sentences).toEqual(fallbackSentences(findTemplate('F1', 'F1.size_check')!, 1));
+  });
+
+  it('ignores any prose the model adds: extra fields are rejected and nothing it wrote is shown', async () => {
+    const { client } = fakeClient(async () => JSON.stringify({ templateId: 'F1.common_parts', sentences: ['Add the denominators.'] }));
+    const r = await new AiService({ client, onFailure: quiet }).explain('F1', 'F1.common_parts', 0);
+    expect(r.source).toBe('fallback');
+    expect(r.fallbackReason).toBe('malformed');
+    expect(r.sentences.join(' ')).not.toContain('Add the denominators');
   });
 
   it('falls back with verified template text on malformed JSON', async () => {
     const { client } = fakeClient(async () => 'not json {');
-    const r = await new AiService({ client }).explain('F1', 'F1.common_parts', 1);
-    const template = findTemplate('F1', 'F1.common_parts')!;
-    expect(r.source).toBe('fallback');
-    expect(r.fallbackReason).toBe('invalid_output');
-    expect(r.templateId).toBe(template.id);
-    expect(r.sentences).toEqual(fallbackSentences(template, 1));
+    const r = await new AiService({ client, onFailure: quiet }).explain('F1', 'F1.common_parts', 1);
+    expect(r).toMatchObject({ source: 'fallback', fallbackReason: 'malformed', templateId: 'F1.common_parts' });
+    expect(r.sentences).toEqual(fallbackSentences(findTemplate('F1', 'F1.common_parts')!, 1));
   });
 
-  const bad: Record<string, unknown> = {
-    'three sentences': { templateId: 'F1.common_parts', sentences: ['One.', 'Two.', 'Three.'] },
-    'overlong sentence': { templateId: 'F1.common_parts', sentences: ['a'.repeat(161)] },
-    'digits in sentence': { templateId: 'F1.common_parts', sentences: ['Add 1 and 2.'] },
-    'markup in sentence': { templateId: 'F1.common_parts', sentences: ['<script>alert(x)</script>'] },
-    'extra field': { templateId: 'F1.common_parts', sentences: ['Fine.'], correct: true },
-  };
-  it.each(Object.entries(bad))('falls back on schema-invalid output: %s', async (_name, payload) => {
-    const { client } = fakeClient(async () => JSON.stringify(payload));
-    const r = await new AiService({ client }).explain('F1', 'F1.common_parts', 0);
-    expect(r.source).toBe('fallback');
-    expect(r.fallbackReason).toBe('invalid_output');
-  });
-
-  it('falls back when the templateId belongs to another family', async () => {
-    const { client } = fakeClient(async () => good(TEMPLATES.F2[0]!.id));
-    const r = await new AiService({ client }).explain('F1', 'F1.common_parts', 0);
-    expect(r.fallbackReason).toBe('invalid_output');
+  it('rejects a templateId that belongs to another family', async () => {
+    const { client } = fakeClient(async () => pick(TEMPLATES.F2[0]!.id));
+    const r = await new AiService({ client, onFailure: quiet }).explain('F1', 'F1.common_parts', 0);
+    expect(r.fallbackReason).toBe('rejected');
     expect(r.templateId.startsWith('F1.')).toBe(true);
   });
 
   it('falls back with timeout when the client never resolves', async () => {
     const { client } = fakeClient(() => new Promise<string>(() => {}));
-    const r = await new AiService({ client, timeoutMs: 50 }).explain('F1', 'F1.common_parts', 0);
-    expect(r.source).toBe('fallback');
+    const r = await new AiService({ client, timeoutMs: 50, onFailure: quiet }).explain('F1', 'F1.common_parts', 0);
     expect(r.fallbackReason).toBe('timeout');
   });
 
-  it('falls back on provider errors without retrying', async () => {
-    const { client, generateJson } = fakeClient(async () => {
-      throw new Error('quota exceeded');
-    });
-    const r = await new AiService({ client }).explain('F1', 'F1.common_parts', 0);
-    expect(r.fallbackReason).toBe('provider_error');
-    expect(generateJson).toHaveBeenCalledTimes(1);
-  });
-
-  it('retries a transient error once', async () => {
+  it('retries a transient error once, and only a transient error', async () => {
     let n = 0;
     const { client, generateJson } = fakeClient(async () => {
       if (n++ === 0) throw new TransientModelError('503');
-      return good();
+      return pick();
     });
     const r = await new AiService({ client }).explain('F1', 'F1.common_parts', 0);
     expect(r.source).toBe('gemini');
     expect(generateJson).toHaveBeenCalledTimes(2);
   });
 
-  it('uses fallback with no_key when there is no client', async () => {
-    const ai = new AiService({ client: null });
+  it('uses fallback with no_key when there is no client, without logging a failure', async () => {
+    const onFailure = vi.fn();
+    const ai = new AiService({ client: null, onFailure });
     expect(ai.live).toBe(false);
+    expect(ai.health).toBe('offline');
     const r = await ai.explain('F2', 'F2.sharing', 0);
-    expect(r.source).toBe('fallback');
-    expect(r.fallbackReason).toBe('no_key');
+    expect(r).toMatchObject({ source: 'fallback', fallbackReason: 'no_key' });
+    expect(onFailure).not.toHaveBeenCalled();
   });
 
   it('enforces the hourly budget', async () => {
-    const { client, generateJson } = fakeClient(async () => good());
-    const ai = new AiService({ client, callsPerHour: 1, now: () => 1_000_000 });
+    const { client, generateJson } = fakeClient(async () => pick());
+    const ai = new AiService({ client, callsPerHour: 1, now: () => 1_000_000, onFailure: quiet });
     expect((await ai.explain('F1', 'F1.common_parts', 0)).source).toBe('gemini');
     const second = await ai.explain('F2', 'F2.sharing', 0);
     expect(second.fallbackReason).toBe('budget');
     expect(generateJson).toHaveBeenCalledTimes(1);
   });
 
-  it('caches successes by family, template and hint level', async () => {
-    const { client, generateJson } = fakeClient(async () => good());
+  it('caches successes by family, template and hint level, but never fallbacks', async () => {
+    const { client, generateJson } = fakeClient(async () => pick());
     const ai = new AiService({ client });
     await ai.explain('F1', 'F1.common_parts', 0);
     await ai.explain('F1', 'F1.common_parts', 0);
     expect(generateJson).toHaveBeenCalledTimes(1);
     await ai.explain('F1', 'F1.common_parts', 1);
     expect(generateJson).toHaveBeenCalledTimes(2);
-  });
 
-  it('does not cache fallback results', async () => {
-    const { client, generateJson } = fakeClient(async () => 'garbage');
-    const ai = new AiService({ client });
-    await ai.explain('F1', 'F1.common_parts', 0);
-    await ai.explain('F1', 'F1.common_parts', 0);
-    expect(generateJson).toHaveBeenCalledTimes(2);
+    const bad = fakeClient(async () => 'garbage');
+    const ai2 = new AiService({ client: bad.client, onFailure: quiet });
+    await ai2.explain('F1', 'F1.common_parts', 0);
+    await ai2.explain('F1', 'F1.common_parts', 0);
+    expect(bad.generateJson).toHaveBeenCalledTimes(2);
   });
 
   it('de-duplicates concurrent identical calls', async () => {
     const { client, generateJson } = fakeClient(async () => {
       await new Promise((r) => setTimeout(r, 20));
-      return good();
+      return pick();
     });
     const ai = new AiService({ client });
     const [a, b] = await Promise.all([ai.explain('F1', 'F1.common_parts', 0), ai.explain('F1', 'F1.common_parts', 0)]);
     expect(generateJson).toHaveBeenCalledTimes(1);
     expect(a).toEqual(b);
+  });
+});
+
+describe('failures are classified, not retried, and reported without details', () => {
+  it.each([
+    [401, 'API key not valid', 'auth'],
+    [403, 'permission denied', 'auth'],
+    [400, 'API key not valid. Please pass a valid API key.', 'auth'],
+    [402, 'prepayment credits are depleted', 'quota'],
+    [429, 'quota exceeded', 'quota'],
+    [404, 'models/x is not found', 'model_unavailable'],
+    [400, 'bad request', 'provider'],
+  ] as [number, string, string][])('status %i (%s) → %s and is never retried', async (status, message, kind) => {
+    const error = classifyApiError(status, message);
+    expect(error).toBeInstanceOf(ModelCallError);
+    expect((error as ModelCallError).kind).toBe(kind);
+    const { client, generateJson } = fakeClient(async () => {
+      throw error;
+    });
+    const seen: FallbackReason[] = [];
+    const r = await new AiService({ client, onFailure: (reason) => seen.push(reason) }).explain('F1', 'F1.common_parts', 0);
+    expect(r.fallbackReason).toBe(kind === 'provider' ? 'provider_error' : kind);
+    expect(generateJson).toHaveBeenCalledTimes(1);
+    // Only the category is reported: never provider text, keys or learner input.
+    expect(seen).toEqual([r.fallbackReason]);
+    expect(JSON.stringify(r)).not.toContain(message);
+  });
+
+  it.each([500, 502, 503, 504])('status %i is transient and retried once', (status) => {
+    expect(classifyApiError(status, 'unavailable')).toBeInstanceOf(TransientModelError);
+  });
+});
+
+describe('health reflects accepted responses only', () => {
+  it('is "untested" before use, "live" after an accepted reply, "failing" after a failed or rejected one', async () => {
+    let reply = pick();
+    const { client } = fakeClient(async () => reply);
+    const ai = new AiService({ client, onFailure: quiet });
+    expect(ai.health).toBe('untested');
+    await ai.explain('F1', 'F1.common_parts', 0);
+    expect(ai.health).toBe('live');
+    reply = 'garbage';
+    await ai.explain('F2', 'F2.sharing', 0);
+    expect(ai.health).toBe('failing');
+    reply = pick('F2.sharing');
+    await ai.explain('F2', 'F2.same_whole', 0);
+    expect(ai.health).toBe('live');
+  });
+
+  it('a provider-success reply that fails validation is NOT counted as the AI working', async () => {
+    const { client } = fakeClient(async () => pick(TEMPLATES.F3[0]!.id));
+    const ai = new AiService({ client, onFailure: quiet });
+    await ai.explain('F1', 'F1.common_parts', 0);
+    expect(ai.health).toBe('failing');
+  });
+
+  it('a cached result does not change health', async () => {
+    const { client } = fakeClient(async () => pick());
+    const ai = new AiService({ client });
+    await ai.explain('F1', 'F1.common_parts', 0);
+    expect(ai.health).toBe('live');
+    // A different request now fails, then the cached one is served: the failure still stands.
+    const failing = new AiService({ client: fakeClient(async () => 'x').client, onFailure: quiet });
+    await failing.explain('F1', 'F1.common_parts', 1);
+    expect(failing.health).toBe('failing');
   });
 });
 
@@ -147,10 +191,10 @@ describe('AiService.interpretReason', () => {
 
   it('falls back to none on invalid output', async () => {
     const { client } = fakeClient(async () => JSON.stringify({ family: 'F9' }));
-    expect(await new AiService({ client }).interpretReason('x')).toEqual({
+    expect(await new AiService({ client, onFailure: quiet }).interpretReason('x')).toEqual({
       source: 'fallback',
       family: 'none',
-      fallbackReason: 'invalid_output',
+      fallbackReason: 'malformed',
     });
   });
 
@@ -190,7 +234,6 @@ describe('prompt injection cannot change engine outcomes', () => {
     const learner = createLearner(3);
     if (learner.step.kind !== 'question') throw new Error('expected question');
     const q = learner.step.question;
-    // Find a wrong answer that is neither the true sum nor the add-across answer.
     const candidates: Answer[] = [7, 11, 13].map((d) => ({ kind: 'fraction', numerator: '1', denominator: String(d) }));
     const wrong = candidates.find((a) => {
       const e = FAMILIES.F1.evaluate(q, a);

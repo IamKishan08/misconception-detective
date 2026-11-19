@@ -4,7 +4,7 @@ import { checkAnswer, type AnswerCheck } from '../../engine/solver/check.js';
 import { describeProblem, problemText, type Problem } from '../../engine/solver/problem.js';
 import { similarProblem } from '../../engine/solver/similar.js';
 import { solve, type Solution } from '../../engine/solver/solve.js';
-import { askFollowUp, type FollowUp } from '../api.js';
+import type { HistoryEvent } from '../../engine/history.js';
 import { messages } from '../messages.js';
 import { ProblemDisplay } from './ProblemDisplay.js';
 import { SolutionView, type InitialReveal } from './SolutionView.js';
@@ -20,7 +20,9 @@ interface Props {
   onDraft: (draft: Draft) => void;
   /** True when a Gemini key is configured on the server; follow-up questions are only offered then. */
   aiConfigured: boolean;
-  onAiSource: (source: FollowUp['source']) => void;
+  onAiSource: (source: 'gemini' | 'fallback') => void;
+  /** Records real activity for My progress. */
+  onHistory: (event: HistoryEvent) => void;
 }
 
 interface Session {
@@ -29,6 +31,8 @@ interface Session {
   readonly check: AnswerCheck | null;
   readonly mode: 'check' | 'start';
   readonly nonce: number;
+  /** Identifies this problem attempt in the student's history, so repeated checks never create duplicates. */
+  readonly key: string;
 }
 
 const m = messages.solve;
@@ -83,7 +87,7 @@ function Feedback({ check, onSimilar }: { check: AnswerCheck; onSimilar: () => v
   );
 }
 
-export function SolveFlow({ draft, onDraft, aiConfigured, onAiSource }: Props) {
+export function SolveFlow({ draft, onDraft, aiConfigured, onAiSource, onHistory }: Props) {
   const ids = useId();
   const [touched, setTouched] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -94,6 +98,7 @@ export function SolveFlow({ draft, onDraft, aiConfigured, onAiSource }: Props) {
   const resultRef = useRef<HTMLHeadingElement>(null);
   const nonce = useRef(0);
   const similarCount = useRef(0);
+  const attempt = useRef<{ text: string | null; key: string }>({ text: null, key: '' });
 
   const preview = useMemo(() => (draft.problem.trim() === '' ? null : parseProblem(draft.problem)), [draft.problem]);
 
@@ -124,8 +129,14 @@ export function SolveFlow({ draft, onDraft, aiConfigured, onAiSource }: Props) {
         return;
       }
     }
+    // One history entry per problem attempt: the same problem keeps its key until a new problem is chosen.
+    const text = problemText(parsed.problem);
+    if (attempt.current.text !== text) attempt.current = { text, key: `solve-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}` };
+    const key = attempt.current.key;
+    if (check !== null) onHistory({ type: 'check', key, source: 'solve', problem: parsed.problem, correct: check.verdict !== 'incorrect', answer: check.shown });
+    else onHistory({ type: 'help', key, source: 'solve', problem: parsed.problem, kind: 'hint' });
     nonce.current += 1;
-    setSession({ problem: parsed.problem, solution, check, mode, nonce: nonce.current });
+    setSession({ problem: parsed.problem, solution, check, mode, nonce: nonce.current, key });
     setAnnouncement(m.readAs(describeProblem(parsed.problem)));
   }
 
@@ -135,6 +146,7 @@ export function SolveFlow({ draft, onDraft, aiConfigured, onAiSource }: Props) {
     setNotice(null);
     setTouched(false);
     similarCount.current = 0;
+    attempt.current = { text: null, key: '' };
     answerRef.current?.focus();
   }
 
@@ -147,6 +159,7 @@ export function SolveFlow({ draft, onDraft, aiConfigured, onAiSource }: Props) {
     setSession(null);
     setNotice(null);
     setTouched(false);
+    attempt.current = { text: null, key: '' };
     setAnnouncement(m.similarReady(describeProblem(next)));
     answerRef.current?.focus();
   }
@@ -278,8 +291,11 @@ export function SolveFlow({ draft, onDraft, aiConfigured, onAiSource }: Props) {
               showHints={session.mode === 'start'}
               studentAnswer={answerInfo}
               onSimilar={offerSimilar}
-              ask={aiConfigured ? (question, signal) => askFollowUp(session.problem, question, signal) : undefined}
-              onAskSource={onAiSource}
+              showHelp
+              aiConfigured={aiConfigured}
+              causes={session.check?.causes.map((c) => c.id) ?? []}
+              onAiSource={onAiSource}
+              onSolutionShown={() => onHistory({ type: 'help', key: session.key, source: 'solve', problem: session.problem, kind: 'solution' })}
             />
           </section>
         )}

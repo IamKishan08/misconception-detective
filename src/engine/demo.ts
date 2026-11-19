@@ -1,6 +1,6 @@
 /**
- * Reproducible learner scripts. Used for the three README demo contexts, the engine tests,
- * and the clearly labelled "Sample" learners in the teacher view.
+ * Reproducible learner scripts for the README demo contexts and the engine tests.
+ * Never used by the app UI: no sample or made-up learners appear anywhere a student can see.
  */
 import { FAMILIES } from './families/index.js';
 import { continueFromReview, createLearner, submitAnswer, type LearnerState, type NextAction } from './progression.js';
@@ -44,21 +44,3 @@ export const DEMO_CONTEXTS = {
   /** 3. Correct on the transfer question after the explanation → harder transfer (family "improving"). */
   transferAfterExplanation: ['wrong', 'wrong', 'continue', 'right'],
 } as const satisfies Record<string, readonly ScriptMove[]>;
-
-export interface SampleLearner {
-  readonly id: string;
-  readonly displayName: string;
-  readonly state: LearnerState;
-}
-
-/** Sample learners for the teacher view. Never mixed into the real learner's own progress. */
-export function buildSampleLearners(): SampleLearner[] {
-  const scripts: { id: string; name: string; seed: number; moves: ScriptMove[] }[] = [
-    { id: 'sample-a', name: 'Sample learner A', seed: 101, moves: ['wrong', 'wrong'] },
-    { id: 'sample-b', name: 'Sample learner B', seed: 202, moves: ['right', 'right', 'wrong'] },
-    { id: 'sample-c', name: 'Sample learner C', seed: 303, moves: ['right', 'right', 'right', 'right', 'wrong', 'wrong'] },
-    { id: 'sample-d', name: 'Sample learner D', seed: 404, moves: ['wrong', 'wrong', 'continue', 'right'] },
-    { id: 'sample-e', name: 'Sample learner E', seed: 505, moves: ['right', 'right', 'wrong', 'wrong'] },
-  ];
-  return scripts.map((s) => ({ id: s.id, displayName: s.name, state: runScript(s.seed, s.moves).state }));
-}

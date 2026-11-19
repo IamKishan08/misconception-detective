@@ -1,7 +1,7 @@
 /** Browser client for the small /api surface: timeouts, de-duplication and verified offline fallback. */
 import { z } from 'zod';
 import { defaultTemplate, fallbackSentences, findTemplate } from '../ai/templates.js';
-import type { Problem } from '../engine/solver/problem.js';
+import { validateSelection, type HelpContext, type HelpSelection } from '../engine/solver/help.js';
 import type { FamilyId, Question } from '../engine/types.js';
 
 const CLIENT_TIMEOUT_MS = 8000;
@@ -9,7 +9,7 @@ const CLIENT_TIMEOUT_MS = 8000;
 const explanationSchema = z.object({
   source: z.enum(['gemini', 'fallback']),
   templateId: z.string(),
-  sentences: z.array(z.string()).max(2),
+  sentences: z.array(z.string()).max(3),
 });
 const interpretationSchema = z.object({ source: z.enum(['gemini', 'fallback']), family: z.enum(['F1', 'F2', 'F3', 'none']) });
 const statusSchema = z.object({ explanations: z.enum(['offline', 'untested', 'live', 'failing']) });
@@ -17,12 +17,21 @@ export type AiHealth = z.infer<typeof statusSchema>['explanations'];
 
 export type Explanation = z.infer<typeof explanationSchema> & { networkError?: boolean };
 
-const askSchema = z.object({ source: z.enum(['gemini', 'fallback']), answer: z.string().max(450).optional() });
+const askSchema = z.object({
+  source: z.enum(['gemini', 'fallback']),
+  selection: z.unknown().optional(),
+  fallbackReason: z.string().max(40).optional(),
+});
 
-/** What the app shows after a follow-up question: a checked AI answer, or nothing (the caller uses built-in help). */
-export interface FollowUp {
+/**
+ * Result of asking which help fits a question. A selection is present only when the server's model choice was accepted
+ * by the server AND passes the same applicability check again here; otherwise the caller uses the built-in matcher.
+ */
+export interface HelpChoice {
   source: 'gemini' | 'fallback';
-  answer: string | null;
+  selection: HelpSelection | null;
+  /** Only "no_key" is distinguished for the user; everything else is one simple "not available right now". */
+  reason: 'no_key' | 'unavailable' | null;
 }
 
 const inFlight = new Map<string, Promise<unknown>>();
@@ -118,17 +127,23 @@ export async function interpretReason(text: string, signal?: AbortSignal): Promi
 }
 
 /**
- * Asks a short follow-up question about a solved problem. Only the problem's numbers and the question are sent.
- * Resolves with a null answer on any failure; rejects only when the caller aborts.
+ * Asks the server which reviewed help fits a short question. Only the problem's numbers, the question and the ids of
+ * mistakes the app itself found are sent. Rejects only when the caller aborts.
  */
-export async function askFollowUp(problem: Problem, question: string, signal?: AbortSignal): Promise<FollowUp> {
+export async function askForHelp(ctx: HelpContext, question: string, signal?: AbortSignal): Promise<HelpChoice> {
   try {
-    const parsed = askSchema.safeParse(await postJson('/api/ask', { problem, question }, signal));
-    if (!parsed.success || parsed.data.source !== 'gemini' || parsed.data.answer === undefined) return { source: 'fallback', answer: null };
-    return { source: 'gemini', answer: parsed.data.answer };
+    const body = { problem: ctx.solution.problem, question, ...(ctx.causes.length > 0 ? { causes: [...ctx.causes] } : {}) };
+    const parsed = askSchema.safeParse(await postJson('/api/ask', body, signal));
+    if (!parsed.success) return { source: 'fallback', selection: null, reason: 'unavailable' };
+    if (parsed.data.source === 'gemini') {
+      const checked = validateSelection(parsed.data.selection, ctx);
+      if (checked.ok) return { source: 'gemini', selection: checked.selection, reason: null };
+      return { source: 'fallback', selection: null, reason: 'unavailable' };
+    }
+    return { source: 'fallback', selection: null, reason: parsed.data.fallbackReason === 'no_key' ? 'no_key' : 'unavailable' };
   } catch (error) {
     if (signal?.aborted === true) throw error;
-    return { source: 'fallback', answer: null };
+    return { source: 'fallback', selection: null, reason: 'unavailable' };
   }
 }
 

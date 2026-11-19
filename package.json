@@ -16,7 +16,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "smoke:gemini": "node --env-file=.env --import tsx scripts/smoke-gemini.ts"
   },
   "dependencies": {
     "@google/genai": "^3.6.0",

@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import type { CauseId } from '../../engine/solver/check.js';
 import type { Solution } from '../../engine/solver/solve.js';
-import type { FollowUp } from '../api.js';
-import { MAX_QUESTION_CHARS } from '../../ai/schemas.js';
-import { messages, speakMath } from '../messages.js';
+import { messages } from '../messages.js';
+import { HelpPanel } from './HelpPanel.js';
+import { MathLine } from './MathLine.js';
 import { VisualView } from './VisualView.js';
 
 export type InitialReveal = 'all' | 'progressive' | 'collapsed';
@@ -22,93 +23,18 @@ interface Props {
   /** Called when the worked steps first become visible. Guided practice uses it to record that the solution was seen. */
   onSolutionShown?: () => void;
   onSimilar?: () => void;
-  /** Present only when Gemini is configured. */
-  ask?: (question: string, signal: AbortSignal) => Promise<FollowUp>;
-  onAskSource?: (source: FollowUp['source']) => void;
+  /** Show the "ask about this problem" box. Without it only the built-in buttons appear. */
+  showHelp?: boolean;
+  /** True when a Gemini key is configured on the server; AI then picks which reviewed help to show. */
+  aiConfigured?: boolean;
+  /** Possible mistakes the app found in the student's answer, offered to the selector as options. */
+  causes?: readonly CauseId[];
+  onAiSource?: (source: 'gemini' | 'fallback') => void;
 }
 
 const m = messages.solve;
 
-function MathLine({ text }: { text: string }) {
-  return (
-    <span className="math-line">
-      <span aria-hidden="true">{text}</span>
-      <span className="visually-hidden">{speakMath(text)}</span>
-    </span>
-  );
-}
-
-type AskState = { status: 'idle' } | { status: 'loading' } | { status: 'done'; answer: string } | { status: 'unavailable' };
-
-/**
- * One follow-up question about the current solution. Protected against stale and duplicate work:
- * one request at a time, aborted when the solution changes or the view is left, and always able to recover.
- */
-function AskBox({ ask, onSource }: { ask: NonNullable<Props['ask']>; onSource?: Props['onAskSource'] }) {
-  const id = useId();
-  const [text, setText] = useState('');
-  const [state, setState] = useState<AskState>({ status: 'idle' });
-  const controller = useRef<AbortController | null>(null);
-  const busy = useRef(false);
-
-  useEffect(
-    () => () => {
-      controller.current?.abort();
-    },
-    [],
-  );
-
-  async function submit() {
-    const question = text.trim();
-    if (busy.current || question === '') return;
-    busy.current = true;
-    const mine = new AbortController();
-    controller.current = mine;
-    setState({ status: 'loading' });
-    try {
-      const reply = await ask(question, mine.signal);
-      if (mine.signal.aborted) return;
-      onSource?.(reply.source);
-      setState(reply.answer === null ? { status: 'unavailable' } : { status: 'done', answer: reply.answer });
-    } catch {
-      if (!mine.signal.aborted) setState({ status: 'unavailable' });
-    } finally {
-      if (controller.current === mine) {
-        controller.current = null;
-        busy.current = false;
-      }
-    }
-  }
-
-  return (
-    <form
-      className="ask"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void submit();
-      }}
-    >
-      <label htmlFor={`${id}-q`}>{m.askLabel}</label>
-      <div className="ask-row">
-        <input id={`${id}-q`} type="text" autoComplete="off" maxLength={MAX_QUESTION_CHARS} value={text} onChange={(e) => setText(e.target.value)} aria-describedby={`${id}-note`} />
-        <button type="submit" className="secondary" disabled={state.status === 'loading' || text.trim() === ''}>
-          {state.status === 'loading' ? m.asking : m.ask}
-        </button>
-      </div>
-      <p id={`${id}-note`} className="hint-text">{m.askNote}</p>
-      <div role="status" aria-live="polite" className="ask-result">
-        {state.status === 'done' && (
-          <p className="ai-answer">
-            <span className="source live">{m.askChecked}</span> {state.answer}
-          </p>
-        )}
-        {state.status === 'unavailable' && <p className="note">{m.askUnavailable}</p>}
-      </div>
-    </form>
-  );
-}
-
-export function SolutionView({ solution, initial, studentAnswer, showHints = false, onSolutionShown, onSimilar, ask, onAskSource }: Props) {
+export function SolutionView({ solution, initial, studentAnswer, showHints = false, onSolutionShown, onSimilar, showHelp = false, aiConfigured = false, causes = [], onAiSource }: Props) {
   const total = solution.steps.length;
   const [revealed, setRevealed] = useState(initial === 'all' ? total : initial === 'progressive' ? 0 : 0);
   const [hintsShown, setHintsShown] = useState(showHints ? 1 : 0);
@@ -223,7 +149,7 @@ export function SolutionView({ solution, initial, studentAnswer, showHints = fal
 
       {allShown && total > 0 && <p className="final-answer"><strong>{m.finalAnswer}</strong> {solution.answerText}</p>}
 
-      {ask !== undefined && <AskBox ask={ask} onSource={onAskSource} />}
+      {showHelp && <HelpPanel ctx={{ solution, causes }} aiConfigured={aiConfigured} onAiSource={onAiSource} />}
     </div>
   );
 }

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { MAX_HINTS, needsProactiveSupport, type Step } from '../../engine/progression.js';
 import { questionToProblem } from '../../engine/solver/fromQuestion.js';
 import { solve } from '../../engine/solver/solve.js';
+import type { CauseId } from '../../engine/solver/check.js';
+import type { PatternId } from '../../engine/types.js';
 import type { Explanation } from '../api.js';
 import { messages } from '../messages.js';
 import { QuestionPrompt } from './QuestionCard.js';
@@ -16,8 +18,20 @@ interface Props {
   onTryAgain: () => void;
   onHint: () => void;
   onExplain: () => void;
+  onSimilar: () => void;
   onContinue: () => void;
+  aiConfigured: boolean;
+  onAiSource: (source: 'gemini' | 'fallback') => void;
 }
+
+/** The engine's practice patterns, as the possible mistakes the help selector may offer. Only ever tentative. */
+const PATTERN_CAUSE: Record<PatternId, CauseId | null> = {
+  add_across: 'added_across',
+  bigger_denominator: 'bigger_denominator',
+  scale_one_part: 'changed_one_number',
+  additive_scaling: 'added_same_number',
+  not_equivalent: null,
+};
 
 const m = messages.review;
 
@@ -25,7 +39,7 @@ const m = messages.review;
  * Shown after an answer that needs another look. The original question stays on screen, the feedback says what was
  * observed, and the learner chooses what happens next: try again, a hint, the explanation, or moving on.
  */
-export function ReviewPanel({ step, explanation, onTryAgain, onHint, onExplain, onContinue }: Props) {
+export function ReviewPanel({ step, explanation, onTryAgain, onHint, onExplain, onSimilar, onContinue, aiConfigured, onAiSource }: Props) {
   const { question, run } = step;
   const solution = useMemo(() => solve(questionToProblem(question)), [question]);
   const [hidden, setHidden] = useState(false);
@@ -35,6 +49,8 @@ export function ReviewPanel({ step, explanation, onTryAgain, onHint, onExplain, 
   const text = messages.feedback(step.outcome, planned, question.family, step.answerDisplay);
   const explained = run.solutionViewed && !hidden;
   const assisted = run.hints > 0 || run.solutionViewed;
+  const mapped = step.pattern === null ? null : PATTERN_CAUSE[step.pattern];
+  const causes: CauseId[] = mapped === null ? [] : [mapped];
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -90,12 +106,21 @@ export function ReviewPanel({ step, explanation, onTryAgain, onHint, onExplain, 
                 <button type="button" className="secondary" onClick={run.solutionViewed ? () => setHidden(false) : onExplain}>{m.explain}</button>
               )}
               {explained && <button type="button" className="secondary" onClick={() => setHidden(true)}>{m.hideExplain}</button>}
+              <button type="button" className="secondary" onClick={onSimilar}>{m.similar}</button>
             </div>
           )}
 
           {explained && (
             <div className="reveal">
-              <SolutionView solution={solution} initial="all" />
+              <SolutionView
+                solution={solution}
+                initial="all"
+                onSimilar={onSimilar}
+                showHelp
+                aiConfigured={aiConfigured}
+                causes={causes}
+                onAiSource={onAiSource}
+              />
               <div className="ai-text">
                 {explanation === null ? (
                   <p>{m.aiLoading}</p>
