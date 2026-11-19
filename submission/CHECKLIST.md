@@ -3,9 +3,12 @@
 Status as of 2026-11-19. Items marked **needs you** cannot be completed from the repository.
 
 ## Requirements
-- [ ] **Competition name, submission URL, rubric and rules: not found in the repository. needs you.** A search of all documentation and the git history found no competition name, link, rubric or eligibility rules. The only related text is a line recorded in an earlier README: *"Vertical: AI for Education. Challenge (as recorded): make learning accessible, personalised, interactive and effective; adapt to each learner, assist educators, and increase engagement."* It is not an official rubric. Eligibility has not been checked and is not claimed.
-- [ ] **Does the competition require an educator feature? needs you.** The recorded challenge text mentions "assist educators". The Teacher view and sample learners were **removed** from this version, because no documented requirement was found and My progress must contain only the student's real activity. If the rules do require an educator view, say so; shared engine logic was kept, and a clearly labelled optional view could be rebuilt.
-- [ ] Submission form fields, word limits, video or deadline: unknown. needs you.
+- **Competition:** Prompt War Challenge, AI Geeks Community, track **AI for Education** (event page: https://hack2skill.com/event/promptwars-x-aigeeks).
+- [ ] **Submission URL: to be confirmed. needs you.** The event page above was provided; the direct submission link has not been confirmed.
+- [ ] **Deadline: to be confirmed. needs you.**
+- [ ] **Required form fields, word limits, video or deck requirements: to be confirmed. needs you.** Nothing about them is known from the repository, and none are assumed.
+- [ ] **Rubric and eligibility rules: not checked.** They were not found in the repository, and eligibility is not claimed.
+- [ ] **Educator feature?** An earlier README recorded the challenge as *"make learning accessible, personalised, interactive and effective; adapt to each learner, assist educators, and increase engagement."* That is not an official rubric. The Teacher view and sample learners were **removed**, because no documented requirement was found and My progress must contain only the student's real activity. If the rules do require an educator view, say so; shared engine logic was kept and a clearly labelled optional view could be rebuilt.
 
 ## Materials (complete)
 - [x] Repository link: https://github.com/IamKishan08/misconception-detective
@@ -18,8 +21,8 @@ Status as of 2026-11-19. Items marked **needs you** cannot be completed from the
 - [x] No secrets in the repository (`.env` is git-ignored; only `.env.example` with empty placeholders is tracked)
 
 ## Evidence that is real, and what is not claimed
-- [x] Live Gemini verified: 7/7 smoke selections accepted on `gemini-3.5-flash-lite`, and a real accepted request on the deployed service
-- [x] 348 unit/integration tests, 26 browser tests, typecheck, lint, build all passing
+- [x] Live Gemini verified under strict criteria: 7/7 cases accepted and relevant, plus the template check, on `gemini-3.5-flash-lite`, and a real accepted request on the deployed service
+- [x] 360 unit/integration tests, 26 browser tests, typecheck, lint, build all passing locally (CI status: see `VERIFICATION.md`)
 - [ ] Not claimed (not done): student testing, learning-outcome evidence, screen-reader testing, load testing, testimonials, judging scores
 
 ## Before you submit

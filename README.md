@@ -65,9 +65,9 @@ The header badge says "AI-selected help (Gemini)" only after an accepted reply. 
 Failures are classified as missing key, authentication, quota/billing, unavailable model, timeout, malformed output, rejected output, provider error, or budget. Only a category is logged (never keys, prompts or student text) and the browser shows one simple message. Authentication, quota and bad-request errors are **never retried**; only 5xx/network errors get one retry. Kept: strict request schemas, 2 kB body limit, per-IP rate limit (30/min), 6 s timeout, 200-token output cap, per-instance budget (300 calls/hour). Limits are per Cloud Run instance, not deployment-wide.
 
 ### Configuration and live check
-Environment variables: `GEMINI_API_KEY` (secret), `GEMINI_MODEL` (default `gemini-3.5-flash-lite`), `PORT`. The key stays server-side. Model availability was checked against the provider's own model list, not assumed.
+Environment variables: `GEMINI_API_KEY` (secret), `GEMINI_MODEL` (default `gemini-3.5-flash-lite`), `PORT`, `RATE_LIMIT_PER_MINUTE` (default 30 per client address for endpoints that can call the model; `GET /api/status` is not limited). The key stays server-side. Model availability was checked against the provider's own model list, not assumed.
 
-`npm run smoke:gemini` makes seven real calls through the same service (auth, model, structured output, acceptance) and prints only selections and categories.
+`npm run smoke:gemini` makes seven real calls through the same service plus a template check, and exits 0 only if every case is accepted **and** relevant to its question, the template check is accepted, the on-topic questions give distinct selections and health is live. It prints only selections and categories.
 
 ## Privacy
 - **Stored on this device only (localStorage):** Practise progress, My progress history (problem numbers, your numeric answer, flags; max 100 items) and theme. Typed working and AI questions are never stored.
@@ -115,10 +115,10 @@ Grant the runtime service account `roles/secretmanager.secretAccessor` on the se
 |---|---|
 | `npm run typecheck` | 0 errors |
 | `npm run lint` | clean |
-| `npm test` | 348 tests in 13 files passed |
+| `npm test` | 360 tests in 14 files passed |
 | `npm run build` | passed |
 | `npm run test:e2e` | 26 passed (13 scenarios × desktop 1280×800 and Pixel 7) |
-| `npm run smoke:gemini` (live) | 7/7 selections accepted on `gemini-3.5-flash-lite` |
+| `npm run smoke:gemini` (live, strict) | 7/7 cases accepted *and* relevant, template check accepted, health live, exit 0, on `gemini-3.5-flash-lite` |
 
 Browser tests include axe-core **with colour contrast** in light and dark themes on Solve, My progress, Practise and Settings. Details and limits are in [`submission/VERIFICATION.md`](submission/VERIFICATION.md).
 

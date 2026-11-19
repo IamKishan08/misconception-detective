@@ -59,16 +59,19 @@ export function createApp(options: AppOptions) {
   });
 
   const api = express.Router();
-  api.use(rateLimit(options.rateLimit ?? DEFAULT_RATE_LIMIT));
-  api.use(express.json({ limit: MAX_BODY, strict: true }));
   api.use((_req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     next();
   });
 
+  // Status is a cheap read that never calls the model, so it is not rate limited: every page load asks for it, and many
+  // students behind one school network address would otherwise use up the shared allowance before asking anything.
   api.get('/status', (_req, res) => {
     res.json({ explanations: options.ai.health });
   });
+
+  api.use(rateLimit(options.rateLimit ?? DEFAULT_RATE_LIMIT));
+  api.use(express.json({ limit: MAX_BODY, strict: true }));
 
   api.post('/interpret', async (req, res) => {
     const body = parseBody(interpretRequestSchema, req, res);

@@ -90,11 +90,20 @@ describe('request hardening', () => {
 
   it('rate limits per client with Retry-After', async () => {
     const app = createApp({ ai: new AiService({ client: null }), rateLimit: { windowMs: 60_000, max: 3 } });
-    for (let i = 0; i < 3; i++) expect((await request(app).get('/api/status')).status).toBe(200);
-    const res = await request(app).get('/api/status');
+    for (let i = 0; i < 3; i++) expect((await request(app).post('/api/interpret').send({ text: 'x' })).status).toBe(200);
+    const res = await request(app).post('/api/interpret').send({ text: 'x' });
     expect(res.status).toBe(429);
     expect(res.body).toEqual({ error: 'rate_limited' });
     expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+  });
+
+  it('does not rate limit the cheap status read, and still limits the endpoints that can call the model', async () => {
+    const app = createApp({ ai: new AiService({ client: null }), rateLimit: { windowMs: 60_000, max: 2 } });
+    for (let i = 0; i < 10; i++) expect((await request(app).get('/api/status')).status).toBe(200);
+    expect((await request(app).post('/api/interpret').send({ text: 'x' })).status).toBe(200);
+    expect((await request(app).post('/api/ask').send({ problem: { kind: 'arith', op: 'add', a: { n: 1, d: 2 }, b: { n: 1, d: 4 } }, question: 'hi' })).status).toBe(200);
+    expect((await request(app).post('/api/interpret').send({ text: 'x' })).status).toBe(429);
+    expect((await request(app).get('/api/status')).status).toBe(200);
   });
 
   it('sets security headers and hides x-powered-by', async () => {

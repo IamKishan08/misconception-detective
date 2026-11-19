@@ -16,8 +16,14 @@ const ai = new AiService({ client: apiKey ? createGeminiClient(apiKey, model) : 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const staticDir = process.env.STATIC_DIR ?? path.resolve(here, '../../web');
 
+/**
+ * Requests per minute per client address for endpoints that can call the model. Configurable because a whole class can
+ * share one address; the default stays conservative. Bounded so a typo cannot disable the limit.
+ */
+const rateMax = Math.min(10_000, Math.max(1, Number.parseInt(process.env.RATE_LIMIT_PER_MINUTE ?? '', 10) || 30));
+
 const port = Number.parseInt(process.env.PORT ?? '', 10) || DEFAULT_PORT;
-const server = createApp({ ai, staticDir }).listen(port, '0.0.0.0', () => {
+const server = createApp({ ai, staticDir, rateLimit: { windowMs: 60_000, max: rateMax } }).listen(port, '0.0.0.0', () => {
   console.log(JSON.stringify({ severity: 'INFO', message: 'listening', port, ai: ai.live ? 'configured' : 'not_configured', model: ai.live ? model : null }));
 });
 
