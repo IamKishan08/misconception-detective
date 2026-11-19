@@ -12,7 +12,7 @@ Status as of 2026-11-19. Items marked **needs you** cannot be completed from the
 
 ## Materials (complete)
 - [x] Repository link: https://github.com/IamKishan08/misconception-detective
-- [x] Live demo link, verified working on 2026-11-19 (revision `misconception-detective-00003-gk9`): https://misconception-detective-612071683004.asia-south1.run.app
+- [x] Live demo link, verified working on 2026-11-19 (revision `misconception-detective-00004-qtr`): https://misconception-detective-612071683004.asia-south1.run.app
 - [x] `submission/PROJECT_SUMMARY.md`: problem, audience, solution, role of AI, technical approach, limitations, next steps
 - [x] `submission/DEMO_SCRIPT.md`: 2–3 minute walkthrough
 - [x] `submission/VERIFICATION.md`: dated checks, counts, environment, tested commit and build, live smoke results, unresolved items
@@ -22,7 +22,7 @@ Status as of 2026-11-19. Items marked **needs you** cannot be completed from the
 
 ## Evidence that is real, and what is not claimed
 - [x] Live Gemini verified under strict criteria: 7/7 cases accepted and relevant, plus the template check, on `gemini-3.5-flash-lite`, and a real accepted request on the deployed service
-- [x] 360 unit/integration tests, 26 browser tests, typecheck, lint, build all passing locally (CI status: see `VERIFICATION.md`)
+- [x] 360 unit/integration tests, 28 browser tests, typecheck, lint, build all passing, and the latest CI run green (commit `de57f32`); two earlier CI runs were red, see `VERIFICATION.md`
 - [ ] Not claimed (not done): student testing, learning-outcome evidence, screen-reader testing, load testing, testimonials, judging scores
 
 ## Before you submit

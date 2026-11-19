@@ -27,7 +27,7 @@ Rationale: free prose from a model cannot be verified in general. An earlier ver
 - Server hardening: strict request schemas, body and rate limits, timeouts, per-instance call budget, classified failures (auth, quota, unavailable model, timeout, malformed, rejected) with only categories logged, no retries for authentication or billing errors, API key in Secret Manager.
 - Privacy: progress and history stay in the browser; typed working and AI questions are never stored; what is sent is documented in the app (Settings) and the README.
 - Accessibility: labelled inputs, spoken fractions and equations, live-region announcements, focus management, reduced-motion support, light/dark/system theme; automated axe checks including colour contrast in both themes.
-- Tests: 360 unit and integration tests, 26 browser tests (desktop and phone viewports), and a live Gemini smoke test. See `VERIFICATION.md`.
+- Tests: 360 unit and integration tests, 28 browser tests (desktop and phone viewports), and a live Gemini smoke test. See `VERIFICATION.md`.
 
 ## Limitations
 - Two fractions per problem, inputs up to 999, positive inputs only (answers may be negative); no decimals or mixed-number inputs.

@@ -4,7 +4,7 @@ A fractions tutor for students in classes 5–8. Type your own fraction problem 
 
 - **Repository:** https://github.com/IamKishan08/misconception-detective
 - **Live demo:** https://misconception-detective-612071683004.asia-south1.run.app
-  *(Verified working on 2026-11-19, Cloud Run revision `misconception-detective-00003-gk9`, including a real Gemini request. See [`submission/VERIFICATION.md`](submission/VERIFICATION.md).)*
+  *(Verified working on 2026-11-19, Cloud Run revision `misconception-detective-00004-qtr`, including a real Gemini request. See [`submission/VERIFICATION.md`](submission/VERIFICATION.md).)*
 - **Submission materials:** [`submission/`](submission/) (summary, demo script, verification record, checklist, screenshots)
 
 Educational effectiveness has **not** been validated with students. Nothing here claims learning gains.
@@ -117,7 +117,7 @@ Grant the runtime service account `roles/secretmanager.secretAccessor` on the se
 | `npm run lint` | clean |
 | `npm test` | 360 tests in 14 files passed |
 | `npm run build` | passed |
-| `npm run test:e2e` | 26 passed (13 scenarios × desktop 1280×800 and Pixel 7) |
+| `npm run test:e2e` | 28 passed (14 scenarios × desktop 1280×800 and Pixel 7) |
 | `npm run smoke:gemini` (live, strict) | 7/7 cases accepted *and* relevant, template check accepted, health live, exit 0, on `gemini-3.5-flash-lite` |
 
 Browser tests include axe-core **with colour contrast** in light and dark themes on Solve, My progress, Practise and Settings. Details and limits are in [`submission/VERIFICATION.md`](submission/VERIFICATION.md).
