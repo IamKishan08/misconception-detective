@@ -60,3 +60,36 @@ export function explanationJsonSchema(templateIds: readonly string[]) {
     additionalProperties: false,
   } as const;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Follow-up question about the current solution
+
+/** A follow-up question is short; the problem itself is sent as numbers only. */
+export const MAX_QUESTION_CHARS = 200;
+export const MAX_AI_ANSWER_CHARS = 450;
+
+const fracSchema = z.strictObject({ n: z.number().int().min(0).max(999), d: z.number().int().min(1).max(999) });
+
+export const problemSchema = z
+  .discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('arith'), op: z.enum(['add', 'sub', 'mul', 'div']), a: fracSchema, b: fracSchema }),
+    z.strictObject({ kind: z.literal('compare'), a: fracSchema, b: fracSchema, ask: z.enum(['larger', 'smaller']) }),
+    z.strictObject({ kind: z.literal('equivalent'), known: fracSchema, blank: z.enum(['numerator', 'denominator']), other: z.number().int().min(0).max(999) }),
+  ])
+  .refine((p) => !(p.kind === 'arith' && p.op === 'div' && p.b.n === 0), 'division by zero')
+  .refine((p) => !(p.kind === 'equivalent' && p.blank === 'numerator' && p.other === 0), 'zero denominator');
+
+export const askRequestSchema = z.strictObject({
+  problem: problemSchema,
+  question: z.string().trim().min(1).max(MAX_QUESTION_CHARS),
+});
+export type AskRequest = z.infer<typeof askRequestSchema>;
+
+export const modelAnswerSchema = z.strictObject({ answer: z.string().trim().min(1).max(MAX_AI_ANSWER_CHARS) });
+
+export const ANSWER_JSON_SCHEMA = {
+  type: 'object',
+  properties: { answer: { type: 'string', maxLength: MAX_AI_ANSWER_CHARS } },
+  required: ['answer'],
+  additionalProperties: false,
+} as const;

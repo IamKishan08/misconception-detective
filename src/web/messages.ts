@@ -4,7 +4,7 @@
  */
 import type { FamilyStatus, NextAction, ReasonId } from '../engine/progression.js';
 import { format, type Rational } from '../engine/rational.js';
-import type { Answer, Bar, FamilyId, InvalidReason, Outcome, Question, VisualNote } from '../engine/types.js';
+import type { Answer, FamilyId, InvalidReason, Outcome, Question } from '../engine/types.js';
 
 const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
   'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
@@ -26,12 +26,29 @@ export function numberToWords(value: number): string {
 
 /** Screen-reader text for a fraction: 3/4 → "three quarters", 5/24 → "five over twenty-four". */
 export function fractionSpeech(r: Rational): string {
+  if (r.n < 0) return `negative ${fractionSpeech({ n: -r.n, d: r.d })}`;
   const count = numberToWords(r.n);
   if (r.d === 1) return count;
   const ordinal = ORDINALS[r.d];
   if (ordinal === undefined) return `${count} over ${numberToWords(r.d)}`;
   if (r.n === 1) return `one ${ordinal}`;
   return `${count} ${ordinal === 'half' ? 'halves' : `${ordinal}s`}`;
+}
+
+/** Reads a line of working aloud: "2/4 + 1/4 = 3/4" → "two quarters plus one quarter equals three quarters". */
+export function speakMath(text: string): string {
+  return text
+    .replace(/([-−])?(\d+)\/(\d+)/g, (_m, sign: string | undefined, n: string, d: string) =>
+      fractionSpeech({ n: sign === undefined ? Number(n) : -Number(n), d: Number(d) }))
+    .replace(/\)\//g, ') over ')
+    .replace(/ × /g, ' times ')
+    .replace(/ ÷ /g, ' divided by ')
+    .replace(/ \+ /g, ' plus ')
+    .replace(/ [-−] /g, ' minus ')
+    .replace(/−(\d)/g, 'negative $1')
+    .replace(/ = /g, ' equals ')
+    .replace(/ < /g, ' is less than ')
+    .replace(/ > /g, ' is greater than ');
 }
 
 const FAMILY_NAMES: Record<FamilyId, string> = {
@@ -78,12 +95,6 @@ const INVALID: Record<InvalidReason, string> = {
   unknown_option: 'Please choose one of the options.',
 };
 
-const HINTS: Record<FamilyId, string> = {
-  F1: 'Hint: make both fractions have the same bottom number first, then add only the top numbers.',
-  F2: 'Hint: imagine both wholes are the same size. Which one is cut into bigger pieces?',
-  F3: 'Hint: whatever you multiply the bottom by, multiply the top by the same number.',
-};
-
 function actionLine(action: NextAction): string {
   switch (action) {
     case 'ask_followup':
@@ -108,19 +119,19 @@ function actionLine(action: NextAction): string {
 export const messages = {
   appName: 'Misconception Detective',
   audience: 'Fractions practice for classes 5 to 8',
-  tagline: 'Find the idea behind a fractions mistake, then fix it.',
+  tagline: 'Type a fractions problem and understand it step by step.',
   skipToContent: 'Skip to main content',
-  nav: { practise: 'Practise', teacher: 'Teacher view', data: 'Your data' },
+  nav: { solve: 'Solve my problem', practise: 'Guided practice', teacher: 'Teacher view', data: 'Your data' },
   explanationsLive: 'Live explanations (Gemini)',
-  explanationsOffline: 'Offline explanations',
-  explanationsOfflineDetail: 'Showing verified built-in explanations.',
+  explanationsOffline: 'Built-in explanations',
+  explanationsOfflineDetail: 'The steps are calculated and checked by the app itself. No AI is involved.',
+  theme: { label: 'Theme', system: 'System', light: 'Light', dark: 'Dark' },
   familyName: (f: FamilyId) => FAMILY_NAMES[f],
   familyIdea: (f: FamilyId) => FAMILY_IDEAS[f],
   reteach: (f: FamilyId) => RETEACH[f],
   status: (s: FamilyStatus) => STATUS[s],
   reason: (r: ReasonId) => REASONS[r],
   invalid: (r: InvalidReason) => INVALID[r],
-  hint: (f: FamilyId) => HINTS[f],
   fractionSpeech,
   stageLabel: { item: 'Question', followup: 'Check question', transfer: 'New numbers' } as const,
 
@@ -145,8 +156,12 @@ export const messages = {
     reasonToggle: 'Tell us how you worked it out (optional)',
     reasonText: 'Or type your reason (optional, up to 200 characters)',
     reasonCount: (n: number, max: number) => `${n} of ${max} characters`,
-    showHint: 'Show a hint',
-    hintNote: 'Using a hint is fine. A question answered with a hint does not count toward "secure".',
+    supportLabel: 'Help with this question',
+    notSure: 'Not sure where to start? You can get help without answering first.',
+    hint: 'Give me a hint',
+    anotherHint: 'Give me another hint',
+    explain: 'Explain step by step',
+    hintNote: 'Using a hint or the explanation is fine. A question answered with help does not count as independent practice.',
     check: 'Check answer',
     checking: 'Checking…',
   },
@@ -179,76 +194,136 @@ export const messages = {
   },
 
   feedback(outcome: Outcome, action: NextAction, family: FamilyId, display: string): { title: string; body: string } {
-    const next = actionLine(action);
     switch (outcome) {
       case 'correct':
-        return { title: `Correct: ${display}`, body: action === 'ask_another_item' ? `That is right. We need a little more evidence, so here is a different question. ${next}` : next };
+        return { title: `Correct: ${display}`, body: actionLine(action) };
       case 'possible_misconception':
         return {
-          title: `Not quite: ${display}`,
-          body: `This answer often comes from ${FAMILY_IDEAS[family]}. That is only a possible idea, not a diagnosis. ${next}`,
+          title: `Not quite yet: ${display}`,
+          body: `That is okay, mistakes are how we learn. This answer sometimes comes from ${FAMILY_IDEAS[family]}. That is only a possible reason, not a diagnosis; one answer cannot tell us that.`,
         };
       case 'needs_more_evidence':
-        return { title: `Not quite: ${display}`, body: next };
+        return { title: `Not quite yet: ${display}`, body: 'That is not the answer we were looking for, and that is okay. You can try again, ask for a hint, or see it step by step.' };
       case 'invalid_input':
         return { title: 'Please check your answer', body: '' };
     }
   },
 
-  explanation: {
-    heading: 'Look at it with fraction bars',
-    labelledIntro: (f: FamilyId) => `Your answers matched ${FAMILY_IDEAS[f]} twice. Here is why that does not work.`,
-    supportIntro: 'Here is a picture that can help.',
-    step: (i: number, n: number) => `Step ${i} of ${n}`,
-    previous: 'Previous step',
-    next: 'Next step',
-    continue: 'Try a question with new numbers',
-    loading: 'Loading the explanation…',
-    templateTitle: (id: string) => TEMPLATE_TITLES[id] ?? 'Explanation',
+  review: {
+    heading: 'Let us look at this together',
+    original: 'The question',
+    yourAnswer: 'Your answer',
+    tryAgain: 'Try again',
+    hint: 'Give me a hint',
+    anotherHint: 'Give me another hint',
+    explain: 'Explain step by step',
+    hideExplain: 'Hide the explanation',
+    hintsHeading: 'Hints',
+    supportShown: 'You have tried this more than once, so here is some help. Trying again is still a good idea.',
+    assistedNote: 'You used a hint or the explanation here, so this question will not count as independent practice. That is fine; new numbers next will show what you can do on your own.',
+    correctNow: (display: string) => `Yes, ${display} is correct. Well done for sticking with it.`,
+    continueLabel(action: NextAction): string {
+      switch (action) {
+        case 'ask_followup':
+          return 'Try a check question';
+        case 'ask_another_item':
+          return 'Try a different question';
+        default:
+          return 'Try one with new numbers';
+      }
+    },
+    whyContinue(action: NextAction): string {
+      switch (action) {
+        case 'ask_followup':
+          return 'Why a check question? One more question helps tell a small slip from an idea that keeps coming back. It is your choice when to move on; you can keep working on this one first.';
+        case 'ask_another_item':
+          return 'When you are ready, a different question gives a fresh chance to show what you know. You can keep working on this one first.';
+        default:
+          return 'When you are ready, new numbers check the idea. You can keep working on this one first.';
+      }
+    },
+    aiTitle: (id: string) => TEMPLATE_TITLES[id] ?? 'Explanation',
+    aiLoading: 'Loading a short explanation…',
+    sameIdeaNote: (family: FamilyId) => `Idea being practised: ${FAMILY_NAMES[family].toLowerCase()}.`,
+  },
+
+  solve: {
+    heading: 'Solve my problem',
+    intro: 'Type a fractions problem. I will show it the way I read it, then explain it step by step or check your working.',
+    problemLabel: 'Your fraction problem',
+    placeholder: 'for example 1/2 + 1/4',
+    readAsLabel: 'I read this as:',
+    formatsSummary: 'What can I type?',
+    formatsRows: [
+      ['Add, subtract, multiply or divide two fractions', '1/2 + 1/4   3/4 - 1/6   2/3 × 3/5   1/2 ÷ 3/4'],
+      ['Compare two fractions', 'Compare 2/3 and 3/4'],
+      ['Find a missing number in an equal fraction', '1/2 = ?/8   or   3/5 = 9/?'],
+    ] as const,
+    formatsNote:
+      'Numbers can be up to 999. You can type x or * for × and a minus sign for −. Not supported yet: decimals, mixed numbers like 1 1/2 (write 3/2), negative inputs, more than two fractions, word problems and photos.',
+    answerLabel: 'Your answer (optional)',
+    answerHelp: 'Write it like 3/4, or 1 1/4 for a mixed number.',
+    workingLabel: 'Your working (optional)',
+    workingHelp: 'This stays on your device. It is only used to look for evidence about a mistake.',
+    check: 'Check my working',
+    start: 'Help me get started',
+    examplesLabel: 'Try an example',
+    examples: ['1/2 + 1/4', '3/4 - 1/6', '2/3 × 3/5', '1/2 ÷ 3/4', 'Compare 2/3 and 3/4', '1/2 = ?/8'] as const,
+    needAnswer: 'Type your answer first to check it, or choose "Help me get started" if you are not sure where to begin.',
+    howHeading: 'How it works',
+    howSteps: [
+      'Type a problem, or pick an example.',
+      'Choose "Help me get started" for hints and one step at a time, or type your answer and choose "Check my working".',
+      'Every step is calculated exactly by the app, so the explanation always matches the answer.',
+    ] as const,
+    resultHeading: 'Your problem',
+    edit: 'Not what you meant? Edit it',
+    readAs: (text: string) => `I read this as: ${text}`,
+    similarReady: (text: string) => `A similar problem is ready: ${text}. Try it yourself, or ask for help.`,
+    correctTitle: 'Correct!',
+    correctBody: (shown: string) => `Your answer ${shown} is right.`,
+    unsimplifiedBody: (shown: string, simplest: string) =>
+      `Your answer ${shown} is correct. It can also be simplified to ${simplest}, which is optional here but often asked for in exams.`,
+    incorrectTitle: 'Not quite yet',
+    observed: (shown: string) => `What I can see: your answer is ${shown}, and it does not match the calculated answer.`,
+    possibleHeading: 'A possible reason (not a diagnosis)',
+    possibleLead: 'One possibility:',
+    similarOffer: 'A similar problem can show whether this happens again.',
+    mistakesUseful: 'Mistakes are useful. The steps below show what happens, one move at a time.',
+    solutionHeading: 'Worked solution',
     yourAnswer: 'Your answer',
     correctAnswer: 'Correct answer',
-    whyHeading: 'Why it works',
-    stepsLabel: 'Explanation steps',
-    goToStep: (i: number) => `Go to step ${i}`,
-    barCaption(role: Bar['role'], value: Rational): string {
-      switch (role) {
-        case 'first':
-        case 'second':
-          return format(value);
-        case 'total':
-          return `Total ${format(value)}`;
-        case 'across':
-          return `Tops + bottoms ${format(value)}`;
-        case 'equivalent':
-          return `Equal ${format(value)}`;
-        case 'one_part_scaled':
-          return `Bottom only ${format(value)}`;
-      }
-    },
-    barLabel: (value: Rational, parts: number, shaded: number) =>
-      `${fractionSpeech(value)}: a bar cut into ${parts} equal parts with ${shaded} shaded`,
-    note(note: VisualNote): string {
-      switch (note.key) {
-        case 'two_fractions':
-          return `Here are ${format(note.first)} and ${format(note.second)} on the same size whole. The parts are different sizes.`;
-        case 'common_parts':
-          return `Cut both bars into ${note.parts} equal parts. Now the parts are the same size and can be counted together.`;
-        case 'total':
-          return note.total.n === note.reduced.n && note.total.d === note.reduced.d
-            ? `Count the shaded parts: ${format(note.total)} altogether.`
-            : `Count the shaded parts: ${format(note.total)}, which is the same amount as ${format(note.reduced)}.`;
-        case 'across_not_bigger':
-          return `Adding the tops and bottoms gives ${format(note.across)}. But ${format(note.across)} is not bigger than ${format(note.largest)}, and adding must give more than each part.`;
-        case 'same_whole':
-          return `Both bars are the same whole. ${format(note.smaller)} has more, smaller parts, so it is smaller than ${format(note.bigger)}.`;
-        case 'compare_common':
-          return `Cut both into ${note.parts} equal parts and count: ${format(note.larger)} has more shaded parts, so it is larger.`;
-        case 'split_parts':
-          return `Cut every part of ${format(note.from)} into ${note.factor} pieces. The shaded amount stays the same, and it is now ${format(note.to)}.`;
-        case 'one_part_scaled':
-          return `Changing only the bottom number gives ${format(note.wrong)}: the parts got smaller but the count did not grow, so it is less than ${format(note.right)}.`;
-      }
-    },
+    finalAnswer: 'Answer:',
+    hintsHeading: 'Hints',
+    anotherHint: 'Give me another hint',
+    showFirstStep: 'Show the first step',
+    showNextStep: 'Show the next step',
+    showAllSteps: 'Show all the steps',
+    showHow: 'Show how it works',
+    toolbarLabel: 'Help with this problem',
+    moreSimply: 'Explain more simply',
+    whyThisStep: 'Why this step?',
+    showVisual: 'Show a visual',
+    hideVisual: 'Hide the visual',
+    noVisual: 'These numbers are too big to draw clearly. The steps are still exact.',
+    similar: 'Give me a similar problem',
+    stepOf: (i: number, n: number) => `Step ${i} of ${n}:`,
+    stepsShown: (i: number, n: number) => `${i} of ${n} steps shown`,
+    askLabel: 'Ask a short question about this problem (optional)',
+    ask: 'Ask',
+    asking: 'Asking…',
+    askNote: 'Only the problem numbers and your question are sent, never your name or your working. The answer is checked against the exact steps before it is shown.',
+    askChecked: 'AI answer, numbers checked:',
+    askUnavailable: 'No AI answer is available right now, so nothing was added. The buttons above still explain this problem with the built-in steps.',
+    compareWhich: (ask: 'larger' | 'smaller') => `Which is ${ask}?`,
+    or: 'or',
+    equalsMissingTop: (d: number) => `equals a missing top number over ${d}`,
+    equalsMissingBottom: (n: number) => `equals ${n} over a missing bottom number`,
+    barLabel: (label: string, shaded: number, parts: number, wholes: number) =>
+      wholes > 1
+        ? `${label}: ${shaded} shaded parts, drawn as ${wholes} bars of ${parts} equal parts each`
+        : `${label}: a bar cut into ${parts} equal parts with ${shaded} shaded`,
+    lineLabel: (min: number, max: number, marks: string) => `Number line from ${min} to ${max} with ${marks} marked`,
   },
 
   progress: {
@@ -273,11 +348,14 @@ export const messages = {
 
   teacher: {
     heading: 'Teacher view',
-    deviceNote: 'This view shows only learners on this device. Nothing is shared between devices or sent to a server.',
-    showSamples: 'Show sample learners',
-    samplesNote: 'Sample learners are made-up examples to show how grouping works. They never affect your own progress.',
+    limits:
+      'What this view is: a summary of Guided practice on this device only. It is not a class roster, nothing is shared between devices, and no one else’s answers appear here. Problems typed into "Solve my problem" are not recorded.',
+    deviceNote: 'Only this device’s own practice is shown as real. Nothing is sent to a server.',
+    showSamples: 'Show made-up example learners',
+    samplesNote:
+      'Example learners are invented to show how grouping would look for a class. They are not real students and never affect your own progress.',
     you: 'You (this device)',
-    sampleBadge: 'Sample',
+    sampleBadge: 'Made-up example',
     needsReteach: 'May need reteaching',
     improving: 'Improving',
     secure: (n: number) => `${n} learner${n === 1 ? '' : 's'} secure`,
@@ -289,16 +367,21 @@ export const messages = {
     stage: (s: Question['stage']) => ({ item: 'Question', followup: 'Check', transfer: 'New numbers' })[s],
     outcome: (o: Exclude<Outcome, 'invalid_input'>) =>
       ({ correct: 'correct', possible_misconception: 'matched pattern', needs_more_evidence: 'wrong, no pattern' })[o],
-    hintUsed: 'hint used',
+    hintUsed: 'help used',
+    independent: 'independent',
+    repeat: 'repeat answer',
     answered: 'answered',
   },
 
   data: {
     heading: 'What is stored and what is sent',
-    stored: 'Stored on this device only (localStorage): your answers, the questions you saw, and your progress for each idea. No name, email or account.',
-    sent: 'Sent to our server only when needed: the idea id and hint level, to fetch a short explanation; and, only if you type a reason and your answer does not match a known pattern, that reason text (up to 200 characters) so Gemini can suggest which idea it describes.',
-    notSent: 'Never sent: your answers, your progress, or anything that identifies you. The server does not log what you type.',
-    reset: 'You can delete everything with "Reset my progress".',
+    stored:
+      'Stored on this device only (localStorage): your Guided practice answers, the questions you saw, your progress for each idea, and your theme choice. No name, email or account. Problems you type into "Solve my problem" are kept only while the page is open.',
+    sent:
+      'Sent to our server only when needed: the idea id and hint level, to fetch a short explanation; if you type a reason and your practice answer matches no known pattern, that reason text (up to 200 characters); and, only if a Gemini key is configured and you use "Ask a short question", the problem’s numbers and the question you typed (up to 200 characters). Solving, checking and step-by-step explanations are calculated in your browser and are never sent.',
+    notSent:
+      'Never sent: your answers, your typed working, your progress, or anything that identifies you. The server does not log what you type. Gemini, when used, receives the problem numbers and your short question, and its reply is checked against the exact steps before it is shown.',
+    reset: 'You can delete practice progress with "Reset my progress". Your theme choice is stored separately.',
   },
 } as const;
 

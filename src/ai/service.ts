@@ -5,8 +5,11 @@
  */
 import type { FamilyId } from '../engine/types.js';
 import { TransientModelError, type ModelClient } from './modelClient.js';
-import { explainPrompt, interpretPrompt, type Prompt } from './prompts.js';
-import { INTERPRETATION_JSON_SCHEMA, explanationJsonSchema, modelExplanationSchema, modelInterpretationSchema } from './schemas.js';
+import type { Problem } from '../engine/solver/problem.js';
+import { solve } from '../engine/solver/solve.js';
+import { askPrompt, explainPrompt, interpretPrompt, type Prompt } from './prompts.js';
+import { ANSWER_JSON_SCHEMA, INTERPRETATION_JSON_SCHEMA, explanationJsonSchema, modelAnswerSchema, modelExplanationSchema, modelInterpretationSchema } from './schemas.js';
+import { verifyAiText } from './verify.js';
 import { TEMPLATES, defaultTemplate, fallbackSentences, findTemplate } from './templates.js';
 
 export type AiSource = 'gemini' | 'fallback';
@@ -24,6 +27,13 @@ export interface ExplanationResult {
 export interface InterpretationResult {
   readonly source: AiSource;
   readonly family: FamilyId | 'none';
+  readonly fallbackReason?: FallbackReason;
+}
+
+export interface AskResult {
+  readonly source: AiSource;
+  /** Present only when the model's text passed every check against the verified solution. */
+  readonly answer?: string;
   readonly fallbackReason?: FallbackReason;
 }
 
@@ -87,6 +97,24 @@ export class AiService {
       return { source: 'gemini', family: parsed.data.family };
     } catch (error) {
       return { source: 'fallback', family: 'none', fallbackReason: reasonOf(error) };
+    }
+  }
+
+  /**
+   * Answers a short follow-up question about one problem. The server re-solves the problem itself, grounds the model in
+   * those verified steps, and shows the answer only if every fraction, number and equation in it checks out.
+   * Never cached: the question is learner text.
+   */
+  async ask(problem: Problem, question: string): Promise<AskResult> {
+    const solution = solve(problem);
+    try {
+      const raw = await this.call(askPrompt(solution, question), ANSWER_JSON_SCHEMA);
+      const parsed = modelAnswerSchema.safeParse(safeJson(raw));
+      if (!parsed.success) return { source: 'fallback', fallbackReason: 'invalid_output' };
+      if (!verifyAiText(parsed.data.answer, solution).ok) return { source: 'fallback', fallbackReason: 'invalid_output' };
+      return { source: 'gemini', answer: parsed.data.answer };
+    } catch (error) {
+      return { source: 'fallback', fallbackReason: reasonOf(error) };
     }
   }
 

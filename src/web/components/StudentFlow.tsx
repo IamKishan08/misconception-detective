@@ -1,12 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FAMILIES } from '../../engine/families/index.js';
-import { continueAfterExplanation, hintLevel, startFamily, submitAnswer, type LearnerState, type NextAction } from '../../engine/progression.js';
+import {
+  continueFromReview,
+  hintLevel,
+  markSolutionViewed,
+  requestHint,
+  startFamily,
+  submitAnswer,
+  tryAgain,
+  type LearnerState,
+  type NextAction,
+} from '../../engine/progression.js';
 import type { FamilyId, InvalidReason, Outcome } from '../../engine/types.js';
 import { fetchExplanation, interpretReason, suggestedTemplateId, type Explanation } from '../api.js';
 import { messages } from '../messages.js';
-import { ExplanationPanel } from './ExplanationPanel.js';
 import { ProgressPath } from './ProgressPath.js';
 import { QuestionCard, type Submission } from './QuestionCard.js';
+import { ReviewPanel } from './ReviewPanel.js';
 
 interface Props {
   state: LearnerState;
@@ -15,7 +25,8 @@ interface Props {
   onExplanationSource: (source: Explanation['source']) => void;
 }
 
-interface Feedback {
+/** A short banner above the next question: the previous answer was correct, or could not be read. */
+interface Banner {
   outcome: Outcome;
   action: NextAction;
   family: FamilyId;
@@ -25,32 +36,70 @@ interface Feedback {
 
 export function StudentFlow({ state, onChange, onExplanationSource }: Props) {
   const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [explanation, setExplanation] = useState<Explanation | null>(null);
-  const step = state.step;
-  const explainKey = step.kind === 'explanation' ? `${step.question.id}|${hintLevel(state.families[step.question.family])}` : null;
-  const requested = useRef<string | null>(null);
+  const [banner, setBanner] = useState<Banner | null>(null);
+  const [explanation, setExplanation] = useState<{ key: string; value: Explanation } | null>(null);
 
-  // Fetch the supporting sentences once per explanation step (also after a reload).
+  // Guards for asynchronous work. `latest` is what is on screen now; the others identify the one request allowed to apply.
+  const latest = useRef(state);
+  const mounted = useRef(false);
+  const requestId = useRef(0);
+  const inFlight = useRef(false);
+  const controller = useRef<AbortController | null>(null);
+
   useEffect(() => {
-    if (step.kind !== 'explanation' || explainKey === null || requested.current === explainKey) return;
-    requested.current = explainKey;
-    const family = step.question.family;
+    latest.current = state;
+  }, [state]);
+
+  /** Cancels any pending request so its response can never apply. Used on topic change, reset and unmount. */
+  const invalidate = useCallback(() => {
+    requestId.current += 1;
+    controller.current?.abort();
+    controller.current = null;
+    inFlight.current = false;
+    setBusy(false);
+  }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      requestId.current += 1;
+      controller.current?.abort();
+      controller.current = null;
+      inFlight.current = false;
+    };
+  }, []);
+
+  const step = state.step;
+  const explaining = step.kind === 'review' && step.run.solutionViewed ? step.question : null;
+  const explainFamily = explaining?.family ?? null;
+  const explainLevel = explaining === null ? 0 : hintLevel(state.families[explaining.family]);
+  const explainTemplate = explaining === null ? null : suggestedTemplateId(explaining);
+  const explainKey = explaining === null ? null : `${explaining.id}|${explainLevel}`;
+
+  // Fetch the supporting sentences once per explanation (also after a reload); a changed key cancels the old fetch.
+  useEffect(() => {
+    if (explainKey === null || explainFamily === null || explainTemplate === null) return;
     let cancelled = false;
-    void fetchExplanation(family, suggestedTemplateId(step.question), hintLevel(state.families[family])).then((result) => {
+    void fetchExplanation(explainFamily, explainTemplate, explainLevel).then((result) => {
       if (cancelled) return;
-      setExplanation(result);
+      setExplanation({ key: explainKey, value: result });
       onExplanationSource(result.source);
     });
     return () => {
       cancelled = true;
-      requested.current = null;
     };
-  }, [explainKey, step, state.families, onExplanationSource]);
+  }, [explainKey, explainFamily, explainTemplate, explainLevel, onExplanationSource]);
 
   async function handleSubmit(submission: Submission) {
-    if (step.kind !== 'question') return;
-    const question = step.question;
+    const current = latest.current;
+    if (inFlight.current || current.step.kind !== 'question') return;
+    const question = current.step.question;
+    const counter = current.counter;
+    inFlight.current = true;
+    const mine = ++requestId.current;
+    const abort = new AbortController();
+    controller.current = abort;
     setBusy(true);
     try {
       // Only ask the model about free text when the answer is wrong and matches no known pattern;
@@ -58,65 +107,86 @@ export function StudentFlow({ state, onChange, onExplanationSource }: Props) {
       let suggestedFamily: FamilyId | null = null;
       const evaluation = FAMILIES[question.family].evaluate(question, submission.answer);
       if (evaluation.valid && !evaluation.correct && evaluation.pattern === null && submission.reasonText !== '' && submission.reasonId === null) {
-        suggestedFamily = await interpretReason(submission.reasonText);
+        suggestedFamily = await interpretReason(submission.reasonText, abort.signal);
       }
-      const result = submitAnswer(state, submission.answer, {
-        reasonId: submission.reasonId,
-        suggestedFamily,
-        hintUsed: submission.hintUsed,
-      });
-      setFeedback({
-        outcome: result.outcome,
-        action: result.action,
-        family: question.family,
-        display: evaluation.valid ? evaluation.display : '',
-        invalidReason: result.invalidReason,
-      });
-      if (result.action === 'show_explanation') setExplanation(null);
+      // The learner may have switched topic, reset, or left while we waited; if so this response is stale and is dropped.
+      const stale = mine !== requestId.current || !mounted.current;
+      const now = latest.current;
+      if (stale || now.counter !== counter || now.step.kind !== 'question' || now.step.question.id !== question.id) return;
+
+      const result = submitAnswer(now, submission.answer, { reasonId: submission.reasonId, suggestedFamily });
+      if (result.outcome === 'correct' || result.outcome === 'invalid_input') {
+        setBanner({
+          outcome: result.outcome,
+          action: result.action,
+          family: question.family,
+          display: evaluation.valid ? evaluation.display : '',
+          invalidReason: result.invalidReason,
+        });
+      } else {
+        setBanner(null);
+      }
+      latest.current = result.state;
       onChange(result.state);
     } finally {
-      setBusy(false);
+      // Always recover from errors, but only the request that is still current may clear the loading state.
+      if (mine === requestId.current) {
+        inFlight.current = false;
+        controller.current = null;
+        setBusy(false);
+      }
     }
   }
 
-  function handleContinue() {
-    setFeedback(null);
-    setExplanation(null);
-    onChange(continueAfterExplanation(state));
+  function change(next: LearnerState) {
+    setBanner(null);
+    latest.current = next;
+    onChange(next);
   }
 
   function handlePick(family: FamilyId) {
-    setFeedback(null);
-    setExplanation(null);
-    onChange(startFamily(state, family));
+    invalidate();
+    change(startFamily(state, family));
   }
 
-  const text = feedback === null ? null : messages.feedback(feedback.outcome, feedback.action, feedback.family, feedback.display);
+  const bannerText = banner === null ? null : messages.feedback(banner.outcome, banner.action, banner.family, banner.display);
+  const review = step.kind === 'review' ? step : null;
+  const shownExplanation = explanation !== null && explanation.key === explainKey ? explanation.value : null;
 
   return (
     <div className="student">
       <ProgressPath state={state} onPick={handlePick} />
 
-      <div className={`feedback ${feedback === null ? 'empty' : `outcome-${feedback.outcome}`}`} role="status" aria-live="polite">
-        {feedback !== null && text !== null && (
+      <div className={`feedback ${banner === null ? 'empty' : `outcome-${banner.outcome}`}`} role="status" aria-live="polite">
+        {banner !== null && bannerText !== null && (
           <>
-            <p className="feedback-title">{text.title}</p>
-            {feedback.invalidReason !== undefined ? <p>{messages.invalid(feedback.invalidReason)}</p> : text.body !== '' && <p>{text.body}</p>}
+            <p className="feedback-title">{bannerText.title}</p>
+            {banner.invalidReason !== undefined ? <p>{messages.invalid(banner.invalidReason)}</p> : bannerText.body !== '' && <p>{bannerText.body}</p>}
           </>
         )}
       </div>
 
       {step.kind === 'question' && (
-        <QuestionCard key={`${step.question.id}-${state.counter}`} question={step.question} busy={busy} onSubmit={(s) => void handleSubmit(s)} />
-      )}
-      {step.kind === 'explanation' && (
-        <ExplanationPanel
-          key={step.question.id}
+        <QuestionCard
+          key={`${step.question.id}-${state.counter}`}
           question={step.question}
-          labelled={step.labelled}
-          learnerAnswer={state.families[step.question.family].attempts.findLast((a) => a.question.id === step.question.id)?.answerDisplay ?? null}
-          explanation={explanation}
-          onContinue={handleContinue}
+          run={step.run}
+          busy={busy}
+          focusOnMount={step.run.tries > 0}
+          onSubmit={(s) => void handleSubmit(s)}
+          onHint={() => change(requestHint(state))}
+          onExplain={() => change(markSolutionViewed(state))}
+        />
+      )}
+      {review !== null && (
+        <ReviewPanel
+          key={`${review.question.id}-${state.counter}`}
+          step={review}
+          explanation={shownExplanation}
+          onTryAgain={() => change(tryAgain(state))}
+          onHint={() => change(requestHint(state))}
+          onExplain={() => change(markSolutionViewed(state))}
+          onContinue={() => change(continueFromReview(state))}
         />
       )}
       {step.kind === 'finished' && (

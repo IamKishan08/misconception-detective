@@ -29,12 +29,12 @@ export function ProgressPath({ state, onPick }: Props) {
           const current = state.activeFamily === family && state.step.kind !== 'finished';
           return (
             <li key={family} className={`path-item status-${status}${current ? ' current' : ''}`}>
-              <button type="button" className="path-button" onClick={() => onPick(family)} aria-current={current ? 'step' : undefined}
-                aria-label={`${m.practise(family)}: ${messages.status(status)}${current ? ` (${m.current})` : ''}`}>
+              <button type="button" className="path-button" onClick={() => onPick(family)} aria-current={current ? 'step' : undefined}>
                 <span className="path-marker" aria-hidden="true">{marker(status, index)}</span>
-                <span className="path-text" aria-hidden="true">
+                <span className="path-text">
                   <span className="path-name">{messages.familyName(family)}</span>
                   <span className="path-status">{messages.status(status)}</span>
+                  {current && <span className="visually-hidden"> ({m.current})</span>}
                 </span>
               </button>
             </li>

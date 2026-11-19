@@ -1,162 +1,120 @@
 # Misconception Detective
 
-An adaptive fractions assistant for classes 5–8. When a student gets a fraction question wrong, it spots the **likely faulty idea** behind the answer, **checks it with a targeted follow-up question**, explains it with **fraction bars whose sizes come from exact arithmetic**, then checks the idea again with **new numbers**. Teachers get the learners grouped by likely misconception, with the actual answers behind each grouping and a suggested reteach activity.
+A fractions tutor for classes 5–8 with two parts:
 
-**Live app:** LIVE_URL_PLACEHOLDER
-**Repository:** https://github.com/IamKishan08/misconception-detective
+- **Solve my problem** (the default screen): type your own fraction problem, optionally add your answer and working, and get a verified step-by-step explanation. Everything is calculated exactly in the browser; no AI or API key is needed.
+- **Guided practice**: a short, adaptive sequence that looks for the likely idea behind a wrong answer, checks it with a follow-up, explains it, and re-checks with new numbers. Hints and explanations are available at any time and are never counted as independent mastery.
 
-## 1. Vertical and challenge
+A **Teacher view** summarises Guided practice on the current device only. **Your data** says what is stored and sent.
 
-**Vertical:** AI for Education.
-**Challenge (as recorded):** make learning accessible, personalised, interactive and effective; adapt to each learner, assist educators, and increase engagement.
+No deployment URL is claimed here; none has been verified for this version.
 
-The app targets one well-known classroom problem: a wrong fraction answer is usually not random. It often comes from a specific, fixable idea, such as "add the tops and add the bottoms". Marking the answer wrong does not fix that idea. The app separates *which idea* from *which answer*, checks before it labels, and gives the teacher the evidence.
+## 1. Solve my problem
 
-## 2. Challenge → feature → code → test
+Supported (two fractions at a time, numbers 0–999):
 
-| Challenge phrase | Feature | Source | Tests |
-|---|---|---|---|
-| Accessible | No sign-up; labelled numerator/denominator fields; keyboard and screen-reader support (spoken fractions such as "three quarters", `aria-live` feedback, skip link, visible focus); reasoning **choices** so typing is never required; plain English | [`src/web/components/QuestionCard.tsx`](src/web/components/QuestionCard.tsx), [`src/web/components/Fraction.tsx`](src/web/components/Fraction.tsx), [`src/web/messages.ts`](src/web/messages.ts) | [`tests/web/screens.test.tsx`](tests/web/screens.test.tsx) (axe, keyboard), [`tests/e2e/smoke.spec.ts`](tests/e2e/smoke.spec.ts) |
-| Personalised / adapt | The next action is chosen from **this learner's own history**: first matching error → follow-up; matching follow-up → explanation; correct follow-up → more evidence; transfer results → improving/secure | [`src/engine/progression.ts`](src/engine/progression.ts) | [`tests/engine/progression.test.ts`](tests/engine/progression.test.ts) |
-| Interactive | Fraction bars the learner steps through (Previous/Next); tap or keyboard answers | [`src/web/components/ExplanationPanel.tsx`](src/web/components/ExplanationPanel.tsx), [`src/web/components/FractionBars.tsx`](src/web/components/FractionBars.tsx) | [`tests/engine/families.test.ts`](tests/engine/families.test.ts) (bar quantities = exact arithmetic) |
-| Effective | A **transfer question with new numbers** checks the idea, not a memorised answer; "secure" needs two correct transfers in a row without a hint. Progress shows the actual attempts. No claims of proven learning gains | [`src/engine/progression.ts`](src/engine/progression.ts), [`src/engine/families/`](src/engine/families/) | [`tests/engine/progression.test.ts`](tests/engine/progression.test.ts) |
-| Assist educators | Teacher view groups learners by likely misconception; shows **observed** answers separately from the **inferred** label, plus one reteach activity per family | [`src/engine/teacher.ts`](src/engine/teacher.ts), [`src/web/components/TeacherView.tsx`](src/web/components/TeacherView.tsx) | [`tests/engine/progression.test.ts`](tests/engine/progression.test.ts) (teacher grouping), [`tests/web/screens.test.tsx`](tests/web/screens.test.tsx) |
-| Increase engagement | Short steps, immediate feedback, a visible "Ideas mastered" path for the three ideas. Nothing elaborate | [`src/web/components/ProgressPath.tsx`](src/web/components/ProgressPath.tsx), [`src/web/components/StudentFlow.tsx`](src/web/components/StudentFlow.tsx) | [`tests/e2e/smoke.spec.ts`](tests/e2e/smoke.spec.ts) |
-
-## 3. Walkthrough
-
-**Student**
-1. Open the app. A learner profile is created on the device; there is no sign-up.
-2. Answer a short question (e.g. `1/2 + 1/3`) in the labelled top/bottom boxes, or by choosing an option.
-3. Optionally pick how you worked it out ("I added the tops and the bottoms", "Bigger bottom number means bigger", …) or type a short reason (max 200 characters).
-4. If the answer matches a known error pattern, the app says it is a **possible** idea, never a diagnosis, and asks **one check question** built to separate that idea from a slip (for F1, same denominators: `1/5 + 2/5`).
-5. If the check question shows the same pattern, the label becomes "likely" and the learner steps through **fraction bars** (e.g. re-cutting halves and thirds into sixths), with one or two supporting sentences.
-6. A **new-numbers question** follows. Correct without a hint → "improving" and a harder one; two in a row → "secure", then on to the next idea.
-7. A hint is available on new-numbers questions; answers given with a hint do not count toward "secure".
-
-**Teacher (same device only; the UI says so)**
-- "Teacher view" groups learners by idea: *May need reteaching* (likely/possible) and *Improving*, with each learner's actual answers listed.
-- The label column is marked "Inferred (suggested, not a diagnosis)"; the answers column is "Observed".
-- Five **Sample** learners (badged "Sample") show how grouping looks; a checkbox hides them. They are built separately and never feed the real learner's data.
-
-## 4. Three learner contexts, three different next actions
-
-Reproducible with `DEMO_SEED = 20261119` in [`src/engine/demo.ts`](src/engine/demo.ts), asserted in [`tests/engine/progression.test.ts`](tests/engine/progression.test.ts):
-
-| Context | What happened | Next action |
-|---|---|---|
-| 1. New learner, one matching error | Gives `2/5` for an addition item (adds across) | `ask_followup`: a check question; label only "possible" |
-| 2. Same F1 error on item **and** follow-up | Adds across twice | `show_explanation` with fraction bars, then a transfer question |
-| 3. Correct transfer after the explanation | Answers the new-numbers question correctly, no hint | `ask_harder_transfer`; family marked "improving" (a second in a row → "secure", next family) |
-
-## 5. Architecture and who decides what
-
-```
-src/engine   pure TypeScript: exact rationals, 3 families (generator, detector, follow-up, visual, transfer), progression, teacher grouping
-src/ai       Gemini adapter, prompts, Zod schemas, verified fallback templates, guarded service (timeout, retry, budget, cache)
-src/server   Express: /healthz, /api/status, /api/interpret, /api/explain, static frontend, security headers, rate limit
-src/web      React + Vite: student flow, fraction bars, teacher view, messages (all strings), localStorage module
-tests/       engine, api + AI contract, web (axe), e2e (Playwright)
-```
-
-| Code decides (always) | Gemini may do (optional) |
+| Type | Examples |
 |---|---|
-| Arithmetic, answer checking, pattern detection | Map the learner's optional free-text reason to `F1`/`F2`/`F3`/`none` |
-| Question generation and all numbers shown | Choose one of the family's two explanation template ids |
-| Fraction-bar quantities | Write at most two short supporting sentences, adjusted for hint use |
-| Labels, state transitions, next action, when evidence is enough | — |
+| Add, subtract, multiply, divide | `1/2 + 1/4`, `3/4 - 1/6`, `2/3 × 3/5`, `1/2 ÷ 3/4`, `2/3 x 3/5`, `1/2 plus 1/4`, `½ + ¼` |
+| Compare | `Compare 2/3 and 3/4`, `which is smaller 2/3 or 3/4`, `2/3 vs 3/4` |
+| Missing number in an equal fraction | `1/2 = ?/8`, `3/5 = 9/?` |
 
-- A model suggestion about free text can **only prompt a follow-up question**, exactly like a tapped reasoning choice; it can never set a label (tested).
-- The free-text call happens **only** when the answer is wrong *and* matches no pattern *and* no reasoning choice was tapped. Answer checking and the next-step choice never call the model.
-- Model output is validated with Zod: unknown template id, more than two sentences, sentences over 160 characters, **any digit**, `<`/`>` or links → rejected and the verified template is used. Digits are banned so that every number on screen comes from code.
-- Model text is rendered as plain React text (no `dangerouslySetInnerHTML` anywhere).
-- Without a key, or on timeout (6 s), quota/provider error, invalid output or an exhausted budget, the app uses the hand-written explanation and shows **"Offline explanations"**. Fallback text is never presented as a live model response.
-- Model: `GEMINI_MODEL` env var, default `gemini-3.5-flash-lite`, via the official `@google/genai` SDK with structured JSON output, a 256-token output cap and thinking disabled.
+Whole numbers work as fractions (`2 × 3/5`). Answers can be fractions, whole numbers, negatives or mixed numbers (`1 1/4`).
 
-## 6. Maths assumptions and progression heuristics
+How it behaves:
+- The problem is shown back as the app read it (live, before solving) with a link to edit it. Unsupported or ambiguous input gets a specific message and **is never silently changed**: zero denominators, dividing by zero, decimals, mixed numbers or negatives as *inputs*, more than two fractions, `1/2 / 3/4`, `1/2 = 2/4` (no blank), unknown words, numbers over 999.
+- "**Check my working**" compares your answer exactly (cross-multiplication, never floating point). Equivalent answers are right; a correct unsimplified answer is acknowledged as correct with optional simplification. Negative and improper results are handled; bars for values above one are drawn as several whole bars and negatives use a number line.
+- "**Help me get started**" gives hints and reveals one step at a time, with no wrong answer needed. The correct answer appears only after the last step.
+- The original problem stays visible. Your answer and the correct answer are separate tiles.
+- A wrong answer is reported as an **observation** ("your answer is smaller than 1/2, but adding can only make it bigger"). A **possible** explanation (e.g. adding tops and bottoms) is shown only if the answer matches a known pattern, labelled "not a diagnosis". Evidence is marked as "final answer only" unless your typed working actually contains it (for example `1 + 1` and `2 + 4`).
+- Follow-ups inside a problem: **Explain more simply**, **Why this step?**, **Show a visual**, **Give me a similar problem** (deterministic, same kind, always solvable).
+- Optional, only if a Gemini key is configured: **Ask a short question** about the current problem.
 
-**Maths**
-- Integers only; denominators ≥ 1; inputs are whole numbers 0–999 (`/^\d{1,4}$/` then a range check). Zero denominators, decimals, negatives, `1e3`, hex and slashes inside a box are rejected with a specific message.
-- Answers are compared by cross-multiplication, never by floating point. Equivalent answers are accepted (`10/12` for `5/6`).
-- Generated operands have denominators 2–12 (F1, F2) and numerators/denominators ≤ 24 (all families); F1 sums stay ≤ 1 so they fit one bar.
-- Every generated item is checked to **discriminate**: the misconception answer differs from the correct answer (and, for F3, from the other wrong pattern). F2 items never have the bigger denominator as the bigger fraction. Options are never duplicated.
+Out of scope and not present: photo upload, word problems, decimals, other subjects.
 
-**Families**
-- **F1** adds numerators and denominators (`1/2 + 1/3 → 2/5`). Follow-up: same denominators (`1/5 + 2/5`), where adding the bottoms still gives a different answer.
-- **F2** thinks a bigger denominator means a bigger fraction (`1/8 > 1/4`). Items use equal numerators; the follow-up is a roti-sharing context.
-- **F3** equivalent fractions: changes only one number (`1/2 = ?/6 → 1`), adds instead of multiplying (`→ 5`), or says `1/2 ≠ 2/4`. Item: missing numerator; follow-up: "are these equal?"; transfer: missing denominator.
+## 2. How answers and explanations are verified
 
-**Progression (MVP heuristics, not validated mastery measures)**, in [`src/engine/progression.ts`](src/engine/progression.ts):
-- First matching error → "possible" → follow-up.
-- Follow-up matches → "likely" → explanation → transfer. A second matching item after a correct follow-up also → "likely".
-- Follow-up correct → needs more evidence → a different item from the same family.
-- Wrong answer matching no pattern → needs more evidence, never a label; after `UNMATCHED_BEFORE_SUPPORT = 2` such answers the explanation is shown without a label.
-- Transfer correct without a hint → "improving"; `SECURE_STREAK = 2` in a row → "secure". A learner with no errors at all becomes secure after item + transfer.
-- No confidence percentages anywhere.
+[`src/engine/solver/`](src/engine/solver/) is plain TypeScript with no `eval`, no expression library and no AI:
 
-## 7. Security, privacy and deployment limits
+- `parse.ts` hand-written grammar for problems and answers; `frac.ts` exact signed fractions (BigInt cross-multiplication for comparison, bounded inputs so products stay far below 2^53); `solve.ts` computes the result independently and writes the steps; `check.ts` evaluates the student's answer; `similar.ts` generates similar problems.
+- Every equation in every step carries a machine-checkable claim. `verifySolution` confirms each is true, and tests check it for **all** operand combinations 0–9/1–9 for each operation plus every comparison, against floating-point results, plus the 999-bound cases.
 
-**What is stored and what is sent** (also shown in the app under "Your data"):
-- *Stored on this device only (localStorage, versioned schema, validated on load):* answers, questions seen and progress per idea. No name, email or account. "Reset my progress" deletes it.
-- *Sent to the server:* the idea id and hint level, to fetch explanation sentences; and only in the case above, the free-text reason (≤ 200 characters) for classification.
-- *Never sent:* answers, progress or identifiers. The server does not log request bodies or learner text.
+## 3. Optional AI follow-up (Gemini)
 
-**Server hardening**
-- Every body validated with strict Zod schemas (unknown fields rejected); JSON body limit 2 kB (→ 413).
-- Helmet headers with a strict CSP (`default-src 'self'`, no inline scripts or styles, `frame-ancestors 'none'`), tested against the built app.
-- Per-IP rate limit on `/api` (30 requests/minute) → 429 with `Retry-After`.
-- Per-instance model budget (300 calls/hour), 6 s timeout, one retry on transient 5xx/network errors only, LRU cache (32 entries) keyed on family + template + hint level — **never** on learner text — and de-duplication of identical in-flight requests (server and browser).
-- **Limitation:** the rate limit, budget and cache are **per Cloud Run instance**, not deployment-wide; with `--max-instances 3` the effective limits are up to 3× higher.
-- The API key is read from the environment (Cloud Run Secret Manager reference); `.env` is gitignored and `.env.example` holds placeholders only.
+- `POST /api/ask` receives only the problem as numbers and the typed question (≤ 200 chars). The server **re-solves the problem itself** and gives the model those verified steps; the model never calculates.
+- The reply must be JSON, ≤ 450 characters, plain text, and pass `src/ai/verify.ts`: no decimals/percentages/links/markup, every fraction and number must already appear in the verified solution, and every equation it writes (`a = b`, `a + b = c`) must be exactly true. Anything else is dropped and the UI says no AI answer is available; the built-in buttons still work.
+- The header badge says "Live explanations (Gemini)" only after a real, accepted model reply; otherwise "Built-in explanations".
+- Kept from before: strict request schemas (unknown fields rejected), 2 kB body limit, per-IP rate limit (30/min), 6 s timeout, one retry on transient errors, per-instance budget (300 calls/hour). The API key stays on the server. Limits are per Cloud Run instance, not deployment-wide.
+- Guided practice still uses `/api/interpret` and `/api/explain` as before (free-text reason classification and two short supporting sentences; digits are banned in model sentences).
+- Model: `GEMINI_MODEL`, default `gemini-3.5-flash-lite`, 400-token output cap, thinking minimal.
 
-## 8. Accessibility
+## 4. Guided practice learning flow
 
-English only for this MVP. All strings are in [`src/web/messages.ts`](src/web/messages.ts), so another language can be added without touching components; `<html lang="en">`.
+Rules in [`src/engine/progression.ts`](src/engine/progression.ts) (MVP heuristics, not validated mastery measures):
 
-- Automated: axe-core finds **zero violations** on the question, explanation, teacher and data screens ([`tests/web/screens.test.tsx`](tests/web/screens.test.tsx)). Colour contrast cannot be computed in jsdom and is checked by hand below.
-- Keyboard walkthrough (manual): MANUAL_A11Y_PLACEHOLDER
+- A wrong answer **never replaces the question**. The engine keeps a *review* step with the same question, your answer and specific feedback. You choose: **Try again**, **Give me a hint**, **Explain step by step**, or move on. The planned next question (follow-up, different item, or new numbers) is created only when you press continue, with a sentence explaining why.
+- Hints (up to two, never revealing the answer) and the worked solution are available on any question *before* answering, so nobody has to submit a wrong answer to get help.
+- Support is shown automatically when the engine decides it is needed: a second wrong answer to the same question, an idea matching twice, or a second unrecognised wrong answer in the family. This replaces the earlier loop where unrecognised wrong transfer answers kept returning new transfer questions with no explanation.
+- Evidence rules: the first wrong answer works as before (pattern → "possible" → follow-up → "likely"); repeat answers to the same question are recorded but never strengthen a label or streak; only a **first answer with no hint, no solution and no earlier try** is `independent` and can count towards "improving" or "secure" (two in a row). Teacher view marks attempts as "help used" or "repeat answer".
+- Saved progress from the previous version loads (an interrupted explanation becomes the same question again).
 
-## 9. Run, test, build, deploy
+## 5. Stale and duplicate async work
 
-Requires Node 24 (tested with v24.22.2) and npm.
+`StudentFlow` guards each model request with a request id, an `AbortController`, a mounted flag and a check against the *latest* state (same question, same counter). Switching topic, resetting (the screen is rebuilt), leaving the view, or answering again discards the old response; loading state always recovers; repeated clicks submit once. The follow-up question box in Solve my problem has the same protections. These are covered by tests that hold the request open (see `tests/web/flows.test.tsx`), and the guard was confirmed to matter by removing it and watching those tests fail.
+
+## 6. Interface
+
+Calm single-column layout on phones; on desktop the form and the explanation sit side by side. Visible labels ("Top number (numerator)"), light/dark/system theme saved on the device, gentle reveal animation that is removed under `prefers-reduced-motion`, keyboard operation with visible focus, focus moved to new results/steps, and live-region announcements. Spoken text for fractions and equations ("two quarters plus one quarter equals three quarters").
+
+The Teacher view states that it is one device only, not a class roster, and does not include Solve my problem. Made-up example learners are **hidden by default**, badged "Made-up example", and never mix with real data.
+
+## 7. Privacy
+
+- *Stored on this device only (localStorage):* Guided practice progress and theme. Problems typed into Solve my problem live in page memory only.
+- *Sent to the server:* idea id + hint level (explanation sentences); an optional practice reason (≤ 200 chars) when the answer matches no pattern; and only with a Gemini key and when you use "Ask a short question", the problem's numbers and your question.
+- *Never sent:* your answers, typed working, progress or identifiers. Solving and checking happen in the browser. The server does not log request bodies.
+
+## 8. Run and review locally
+
+Node 24 and npm.
 
 ```bash
 npm ci
-npm run typecheck && npm run lint && npm test   # unit, API, AI-contract and axe tests
-npm run test:coverage
-npm run build && npm start                      # http://localhost:8080 (offline explanations without a key)
-npx playwright install chromium && npm run test:e2e   # mobile, keyboard-only smoke test against the build
+npm run dev:server        # API on :8080 (terminal 1)
+npm run dev:web           # Vite dev server (terminal 2)
+# or the production build:
+npm run build && npm start        # http://localhost:8080, built-in explanations without a key
 ```
 
-Optional live explanations: copy `.env.example` to `.env`, set `GEMINI_API_KEY`, and start with `node --env-file=.env dist/server/server/index.js`.
+Optional Gemini: copy `.env.example` to `.env`, set `GEMINI_API_KEY`, run `node --env-file=.env dist/server/server/index.js`.
 
-Docker:
+Checks:
+
 ```bash
-docker build -t misconception-detective .
-docker run --rm -p 8080:8080 -e GEMINI_API_KEY=... misconception-detective
+npm run typecheck && npm run lint && npm test
+npm run build
+npx playwright install chromium && npm run test:e2e   # desktop + phone viewports, against the build with no key
 ```
 
-Cloud Run (see [`deploy.sh`](deploy.sh)):
-```bash
-gcloud auth login
-gcloud config set project PROJECT_ID
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com
-printf '%s' "$GEMINI_API_KEY" | gcloud secrets create gemini-api-key --data-file=-
-gcloud secrets add-iam-policy-binding gemini-api-key --member="serviceAccount:PROJECT_NUMBER-compute@developer.gserviceaccount.com" --role=roles/secretmanager.secretAccessor
-gcloud run deploy misconception-detective --source . --region asia-south1 --allow-unauthenticated \
-  --memory 512Mi --max-instances 3 --set-secrets GEMINI_API_KEY=gemini-api-key:latest
-```
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs all of the above including the browser tests. Docker and Cloud Run files (`Dockerfile`, `deploy.sh`) are unchanged.
 
-The container is multi-stage (`node:24-slim`), runs as the non-root `node` user, listens on `0.0.0.0:$PORT`, exposes `/healthz`, shuts down gracefully on SIGTERM and writes nothing to disk.
+## 9. Results of the last local run (Windows, Node 24)
 
-## 10. Verification results (measured)
+| Check | Result |
+|---|---|
+| `npm run typecheck` | passed |
+| `npm run lint` | passed |
+| `npm test` (10 files) | 266 tests passed |
+| `npm run build` | passed |
+| `npm run test:e2e` (13 scenarios × desktop 1280×800 and Pixel 7) | 26 passed |
 
-RESULTS_PLACEHOLDER
+The browser tests include axe-core **with colour contrast** in light and dark themes on the Solve and Guided practice screens. Not done: manual screen-reader testing, testing with real students, and a live Gemini run (no key was used; the Gemini path is tested with fake model clients only).
 
-## 11. Known limitations
+## 10. Limitations
 
-- Three misconception families only, English only, fractions only.
-- The teacher view shows learners on **this device** only; there are no accounts or shared classrooms by design.
-- Progression thresholds are MVP heuristics and have not been validated with students; no learning-gain claims are made.
-- Rate limit, model budget and cache are per instance.
-- The free-text interpretation depends on the model; when it is unavailable, free text is simply not used (reasoning choices still work).
+- Two fractions per problem, inputs up to 999, positive inputs only (answers may be negative), no mixed-number or decimal inputs.
+- Possible-explanation patterns are a short fixed list (e.g. adding across, not flipping when dividing, bigger-denominator-is-bigger, adding the same number to top and bottom); no match means no explanation is offered.
+- Step text is English only and fixed in code; AI text is limited to a short checked answer and is stricter than necessary (an unlisted equivalent fraction in a reply makes it fall back).
+- Guided practice covers three ideas only (adding, comparing, equal fractions). Thresholds are unvalidated heuristics; no learning-gain claims are made.
+- Teacher view is single-device. Rate limit, budget and cache are per instance.
+- Chat-style tutoring beyond one short question, photo input and other subjects are not implemented.

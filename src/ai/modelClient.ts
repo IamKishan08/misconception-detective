@@ -11,8 +11,8 @@ export class TransientModelError extends Error {}
 
 /** 402 (credits depleted) and 429 (quota) fall through as provider errors: no retry, verified fallback. */
 const TRANSIENT_STATUSES = new Set([500, 502, 503, 504]);
-/** Output cap: two short sentences of JSON fit comfortably. */
-export const MAX_OUTPUT_TOKENS = 256;
+/** Output cap: a short JSON answer of at most 450 characters fits comfortably. */
+export const MAX_OUTPUT_TOKENS = 400;
 
 /** Verified working on 19 Nov 2026; gemini-2.5-flash is no longer offered to new API users. */
 export const DEFAULT_MODEL = 'gemini-3.5-flash-lite';

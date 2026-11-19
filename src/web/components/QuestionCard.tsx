@@ -1,26 +1,35 @@
-import { useId, useState, type FormEvent } from 'react';
-import { REASON_IDS, type ReasonId } from '../../engine/progression.js';
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { REASON_IDS, MAX_HINTS, type ReasonId, type Run } from '../../engine/progression.js';
+import { questionToProblem } from '../../engine/solver/fromQuestion.js';
+import { solve } from '../../engine/solver/solve.js';
 import type { Answer, ChoiceId, Question } from '../../engine/types.js';
 import { MAX_REASON_CHARS } from '../../ai/schemas.js';
 import { messages } from '../messages.js';
 import { Fraction } from './Fraction.js';
+import { SolutionView } from './SolutionView.js';
 
 export interface Submission {
   answer: Answer;
   reasonId: ReasonId | null;
   reasonText: string;
-  hintUsed: boolean;
 }
 
 interface Props {
   question: Question;
+  /** Support used so far on this question; kept by the engine so it survives a reload. */
+  run: Run;
   busy: boolean;
   onSubmit: (submission: Submission) => void;
+  onHint: () => void;
+  onExplain: () => void;
+  /** Put the cursor in the first answer box (used when coming back to the same question to try again). */
+  focusOnMount?: boolean;
 }
 
 const m = messages.question;
 
-function Prompt({ question }: { question: Question }) {
+/** The question text and expression. Also shown again when a wrong answer is reviewed, so the question never disappears. */
+export function QuestionPrompt({ question }: { question: Question }) {
   const b = question.body;
   switch (b.type) {
     case 'add':
@@ -89,7 +98,7 @@ function choiceLabel(question: Question, id: ChoiceId) {
   return null;
 }
 
-export function QuestionCard({ question, busy, onSubmit }: Props) {
+export function QuestionCard({ question, run, busy, onSubmit, onHint, onExplain, focusOnMount = false }: Props) {
   const ids = useId();
   const [numerator, setNumerator] = useState('');
   const [denominator, setDenominator] = useState('');
@@ -97,7 +106,12 @@ export function QuestionCard({ question, busy, onSubmit }: Props) {
   const [choice, setChoice] = useState('');
   const [reasonId, setReasonId] = useState<ReasonId | null>(null);
   const [reasonText, setReasonText] = useState('');
-  const [hintShown, setHintShown] = useState(false);
+  const solution = useMemo(() => solve(questionToProblem(question)), [question]);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    if (focusOnMount) formRef.current?.querySelector<HTMLElement>('input')?.focus();
+  }, [focusOnMount]);
   const b = question.body;
 
   function answer(): Answer {
@@ -109,17 +123,17 @@ export function QuestionCard({ question, busy, onSubmit }: Props) {
   function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
-    onSubmit({ answer: answer(), reasonId, reasonText: reasonText.trim(), hintUsed: hintShown });
+    onSubmit({ answer: answer(), reasonId, reasonText: reasonText.trim() });
   }
 
   return (
-    <form className="card" onSubmit={submit} aria-describedby={`${ids}-prompt`} noValidate>
+    <form ref={formRef} className="card" onSubmit={submit} aria-describedby={`${ids}-prompt`} noValidate>
       <p className="stage-label">
         <span className={`stage-pill stage-${question.stage}`}>{messages.stageLabel[question.stage]}</span>
         <span>{messages.familyName(question.family)}</span>
       </p>
       <div id={`${ids}-prompt`} className="prompt">
-        <Prompt question={question} />
+        <QuestionPrompt question={question} />
       </div>
 
       <fieldset className="answer">
@@ -179,18 +193,24 @@ export function QuestionCard({ question, busy, onSubmit }: Props) {
         </fieldset>
       </details>
 
-      {question.stage === 'transfer' && (
-        <div className="hint">
-          {hintShown ? (
-            <p role="note">{messages.hint(question.family)}</p>
-          ) : (
-            <button type="button" className="secondary" onClick={() => setHintShown(true)} aria-describedby={`${ids}-hintnote`}>
-              {m.showHint}
-            </button>
+      <section className="support" aria-label={m.supportLabel}>
+        <p className="support-intro">{m.notSure}</p>
+        <div className="support-actions">
+          {run.hints < MAX_HINTS && (
+            <button type="button" className="secondary" onClick={onHint}>{run.hints === 0 ? m.hint : m.anotherHint}</button>
           )}
-          <p id={`${ids}-hintnote`} className="hint-text">{m.hintNote}</p>
+          {!run.solutionViewed && <button type="button" className="secondary" onClick={onExplain}>{m.explain}</button>}
         </div>
-      )}
+        {run.hints > 0 && (
+          <ol className="hint-list">
+            {solution.hints.slice(0, run.hints).map((hint) => (
+              <li key={hint} role="note" className="reveal">{hint}</li>
+            ))}
+          </ol>
+        )}
+        {(run.hints > 0 || run.solutionViewed) && <p className="hint-text">{m.hintNote}</p>}
+        {run.solutionViewed && <SolutionView solution={solution} initial="all" />}
+      </section>
 
       <button type="submit" className="primary" disabled={busy}>
         {busy ? m.checking : m.check}

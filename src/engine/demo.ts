@@ -3,9 +3,12 @@
  * and the clearly labelled "Sample" learners in the teacher view.
  */
 import { FAMILIES } from './families/index.js';
-import { continueAfterExplanation, createLearner, submitAnswer, type LearnerState, type NextAction } from './progression.js';
+import { continueFromReview, createLearner, submitAnswer, type LearnerState, type NextAction } from './progression.js';
 
-/** 'wrong' gives the family's misconception answer; 'right' the correct answer; 'continue' leaves an explanation. */
+/**
+ * 'wrong' gives the family's misconception answer; 'right' the correct answer; 'continue' moves on from a review.
+ * A move that answers while a review is showing first continues from it, as a learner would by pressing the button.
+ */
 export type ScriptMove = 'wrong' | 'right' | 'continue';
 
 export interface ScriptRun {
@@ -17,10 +20,8 @@ export function runScript(seed: number, moves: readonly ScriptMove[]): ScriptRun
   let state = createLearner(seed);
   const actions: NextAction[] = [];
   for (const move of moves) {
-    if (move === 'continue') {
-      state = continueAfterExplanation(state);
-      continue;
-    }
+    if (move === 'continue' || state.step.kind === 'review') state = continueFromReview(state);
+    if (move === 'continue') continue;
     if (state.step.kind !== 'question') throw new Error(`Script expected a question but found ${state.step.kind}`);
     const question = state.step.question;
     const family = FAMILIES[question.family];

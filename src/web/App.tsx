@@ -1,28 +1,37 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LearnerState } from '../engine/progression.js';
 import { fetchStatus, type AiHealth } from './api.js';
+import { SolveFlow, type Draft } from './components/SolveFlow.js';
 import { StudentFlow } from './components/StudentFlow.js';
 import { TeacherView } from './components/TeacherView.js';
 import { messages } from './messages.js';
-import { loadLearner, loadSettings, resetLearner, saveLearner, saveSettings } from './storage.js';
+import { applyTheme, loadLearner, loadSettings, resetLearner, saveLearner, saveSettings, THEME_CHOICES, type ThemeChoice } from './storage.js';
 
-type View = 'practise' | 'teacher' | 'data';
-const VIEWS: readonly View[] = ['practise', 'teacher', 'data'];
+type View = 'solve' | 'practise' | 'teacher' | 'data';
+const VIEWS: readonly View[] = ['solve', 'practise', 'teacher', 'data'];
+const EMPTY_DRAFT: Draft = { problem: '', answer: '', working: '' };
 
 export function App() {
-  const [view, setView] = useState<View>('practise');
+  const [view, setView] = useState<View>('solve');
   const [state, setState] = useState<LearnerState>(loadLearner);
   const [settings, setSettings] = useState(loadSettings);
   const [aiStatus, setAiStatus] = useState<AiHealth | null>(null);
   const [storageOk, setStorageOk] = useState(true);
   const [announcement, setAnnouncement] = useState('');
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  // Bumped on reset so the practice screen is rebuilt and any request still in flight is cancelled with it.
+  const [epoch, setEpoch] = useState(0);
 
   useEffect(() => {
     void fetchStatus().then(setAiStatus);
   }, []);
 
-  // The badge follows the latest real explanation; "live" is never shown before a model call has succeeded.
-  const onExplanationSource = useCallback((source: 'gemini' | 'fallback') => setAiStatus(source === 'gemini' ? 'live' : 'failing'), []);
+  useEffect(() => {
+    applyTheme(settings.theme);
+  }, [settings.theme]);
+
+  // The badge follows what really happened: "live" only after a real model reply was used, never merely because a key exists.
+  const onAiSource = useCallback((source: 'gemini' | 'fallback') => setAiStatus(source === 'gemini' ? 'live' : 'failing'), []);
 
   function update(next: LearnerState) {
     setState(next);
@@ -31,13 +40,14 @@ export function App() {
 
   function reset() {
     if (!window.confirm(messages.controls.resetConfirm)) return;
+    setEpoch((n) => n + 1);
     update(resetLearner());
     setView('practise');
     setAnnouncement(messages.controls.resetDone);
   }
 
-  function toggleSamples(showSamples: boolean) {
-    const next = { ...settings, showSamples };
+  function changeSettings(patch: Partial<typeof settings>) {
+    const next = { ...settings, ...patch };
     setSettings(next);
     saveSettings(next);
   }
@@ -60,12 +70,22 @@ export function App() {
             <p className="tagline">{messages.tagline}</p>
           </div>
         </div>
-        {aiStatus !== null && aiStatus !== 'untested' && (
-          <p className={`status-pill ${aiStatus === 'live' ? 'live' : 'offline'}`}>
-            {aiStatus === 'live' ? messages.explanationsLive : messages.explanationsOffline}
-            {aiStatus !== 'live' && <span className="visually-hidden"> {messages.explanationsOfflineDetail}</span>}
-          </p>
-        )}
+        <div className="header-tools">
+          {aiStatus !== null && aiStatus !== 'untested' && (
+            <p className={`status-pill ${aiStatus === 'live' ? 'live' : 'offline'}`}>
+              {aiStatus === 'live' ? messages.explanationsLive : messages.explanationsOffline}
+              {aiStatus !== 'live' && <span className="visually-hidden"> {messages.explanationsOfflineDetail}</span>}
+            </p>
+          )}
+          <label className="theme-picker">
+            <span>{messages.theme.label}</span>
+            <select value={settings.theme} onChange={(e) => changeSettings({ theme: THEME_CHOICES.find((t) => t === e.target.value) ?? 'system' })}>
+              {THEME_CHOICES.map((t: ThemeChoice) => (
+                <option key={t} value={t}>{messages.theme[t]}</option>
+              ))}
+            </select>
+          </label>
+        </div>
         <nav aria-label="Main">
           <ul className="tabs">
             {VIEWS.map((v) => (
@@ -82,8 +102,9 @@ export function App() {
       <main id="main" tabIndex={-1}>
         {!storageOk && <p className="note" role="note">{messages.controls.storageWarning}</p>}
         <p className="visually-hidden" role="status">{announcement}</p>
-        {view === 'practise' && <StudentFlow state={state} onChange={update} onExplanationSource={onExplanationSource} />}
-        {view === 'teacher' && <TeacherView state={state} showSamples={settings.showSamples} onToggleSamples={toggleSamples} />}
+        {view === 'solve' && <SolveFlow draft={draft} onDraft={setDraft} aiConfigured={aiStatus !== null && aiStatus !== 'offline'} onAiSource={onAiSource} />}
+        {view === 'practise' && <StudentFlow key={epoch} state={state} onChange={update} onExplanationSource={onAiSource} />}
+        {view === 'teacher' && <TeacherView state={state} showSamples={settings.showSamples} onToggleSamples={(showSamples) => changeSettings({ showSamples })} />}
         {view === 'data' && (
           <section className="card" aria-labelledby="data-heading">
             <h2 id="data-heading">{messages.data.heading}</h2>
@@ -93,9 +114,11 @@ export function App() {
             <p>{messages.data.reset}</p>
           </section>
         )}
-        <p className="reset-row">
-          <button type="button" className="secondary" onClick={reset}>{messages.controls.reset}</button>
-        </p>
+        {view === 'practise' && (
+          <p className="reset-row">
+            <button type="button" className="secondary" onClick={reset}>{messages.controls.reset}</button>
+          </p>
+        )}
       </main>
     </>
   );

@@ -38,7 +38,13 @@ export interface AttemptRecord {
   readonly answerDisplay: string;
   readonly outcome: Exclude<Outcome, 'invalid_input'>;
   readonly pattern: PatternId | null;
+  /** A hint or the worked solution was used before this answer. */
   readonly hintUsed: boolean;
+  /**
+   * True only for a first answer given with no hint, no solution and no earlier try on this question.
+   * Only independent attempts can move a family towards "secure".
+   */
+  readonly independent: boolean;
   readonly reasonId: ReasonId | null;
 }
 
@@ -52,9 +58,28 @@ export interface FamilyProgress {
   readonly hintsUsed: number;
 }
 
+/** Support the learner has used on the question currently on screen. Carried through retries. */
+export interface Run {
+  readonly hints: number;
+  readonly solutionViewed: boolean;
+  /** Wrong answers already given to this question. */
+  readonly tries: number;
+  /** What happens next if the learner chooses to move on after a wrong answer. Set by the first wrong answer. */
+  readonly planned: NextAction | null;
+}
+
 export type Step =
-  | { readonly kind: 'question'; readonly question: Question }
-  | { readonly kind: 'explanation'; readonly question: Question; readonly labelled: boolean }
+  | { readonly kind: 'question'; readonly question: Question; readonly run: Run }
+  /** Shown after an answer that needs another look. The question stays; nothing is replaced until the learner continues. */
+  | {
+      readonly kind: 'review';
+      readonly question: Question;
+      readonly run: Run;
+      readonly answerDisplay: string;
+      readonly outcome: Exclude<Outcome, 'invalid_input'>;
+      readonly pattern: PatternId | null;
+      readonly labelled: boolean;
+    }
   | { readonly kind: 'finished' };
 
 export interface LearnerState {
@@ -80,7 +105,6 @@ export interface AnswerContext {
   readonly reasonId?: ReasonId | null;
   /** Family suggested by the model from free text. Treated exactly like a reasoning choice: it can only prompt a follow-up. */
   readonly suggestedFamily?: FamilyId | null;
-  readonly hintUsed?: boolean;
 }
 
 export interface StepResult {
@@ -97,6 +121,10 @@ export const SECURE_STREAK = 2;
 export const UNMATCHED_BEFORE_SUPPORT = 2;
 /** Attempts kept per family in local storage; older ones are dropped to bound storage. */
 export const MAX_ATTEMPTS_PER_FAMILY = 20;
+/** Wrong answers to the same question after which support is shown automatically instead of only offered. */
+export const SUPPORT_AFTER_TRIES = 2;
+/** Hints available per question before only the step-by-step solution is left. */
+export const MAX_HINTS = 2;
 /** Hint levels passed to the explanation writer: 0 none, 1 one hint, 2 two or more. */
 export const MAX_HINT_LEVEL = 2;
 
@@ -108,6 +136,15 @@ function seenIds(progress: FamilyProgress): Set<string> {
   return new Set(progress.attempts.map((a) => a.question.id));
 }
 
+export function blankRun(): Run {
+  return { hints: 0, solutionViewed: false, tries: 0, planned: null };
+}
+
+/** True when nothing but the learner's own thinking went into the answer being given. */
+export function isIndependent(run: Run): boolean {
+  return run.hints === 0 && !run.solutionViewed && run.tries === 0;
+}
+
 function nextQuestion(state: LearnerState, family: FamilyId, stage: Stage, difficulty: Difficulty): { question: Question; counter: number } {
   const rng = createRng(deriveSeed(state.seedBase, state.counter));
   const question = generateQuestion(family, stage, difficulty, rng, seenIds(state.families[family]));
@@ -116,7 +153,7 @@ function nextQuestion(state: LearnerState, family: FamilyId, stage: Stage, diffi
 
 function withQuestion(state: LearnerState, family: FamilyId, stage: Stage, difficulty: Difficulty): LearnerState {
   const { question, counter } = nextQuestion(state, family, stage, difficulty);
-  return { ...state, counter, activeFamily: family, step: { kind: 'question', question } };
+  return { ...state, counter, activeFamily: family, step: { kind: 'question', question, run: blankRun() } };
 }
 
 export function createLearner(seedBase: number): LearnerState {
@@ -159,7 +196,7 @@ interface Decision {
 }
 
 /** The core rules. `progress` already excludes the current attempt. */
-function decide(stage: Stage, outcome: AttemptRecord['outcome'], progress: FamilyProgress, family: FamilyId, ctx: AnswerContext): Decision {
+function decide(stage: Stage, outcome: AttemptRecord['outcome'], progress: FamilyProgress, family: FamilyId, ctx: AnswerContext, independent: boolean): Decision {
   const keep = { status: progress.status, transferStreak: progress.transferStreak, unmatchedWrong: progress.unmatchedWrong };
   const hinted = ctx.reasonId != null && REASON_FAMILY[ctx.reasonId] === family;
   const suggested = hinted || ctx.suggestedFamily === family;
@@ -191,46 +228,113 @@ function decide(stage: Stage, outcome: AttemptRecord['outcome'], progress: Famil
   }
 
   // Transfer question.
-  if (outcome === 'correct' && ctx.hintUsed !== true) {
+  if (outcome === 'correct' && independent) {
     const streak = progress.transferStreak + 1;
     const hadErrors = progress.attempts.some((a) => a.outcome !== 'correct');
-    if (!hadErrors || streak >= SECURE_STREAK) return { ...keep, status: 'secure', transferStreak: streak, action: 'next_family' };
-    return { ...keep, status: 'improving', transferStreak: streak, action: 'ask_harder_transfer' };
+    const cleared = { ...keep, unmatchedWrong: 0 };
+    if (!hadErrors || streak >= SECURE_STREAK) return { ...cleared, status: 'secure', transferStreak: streak, action: 'next_family' };
+    return { ...cleared, status: 'improving', transferStreak: streak, action: 'ask_harder_transfer' };
   }
+  // Correct only with help: not independent evidence, so the streak restarts and no status improves.
   if (outcome === 'correct') return { ...keep, transferStreak: 0, action: 'ask_transfer' };
   if (outcome === 'possible_misconception') return { ...keep, status: 'likely', transferStreak: 0, action: 'show_explanation' };
-  return { ...keep, transferStreak: 0, action: 'ask_transfer' };
+  // A wrong answer that matches no known pattern: never loop on new transfer questions without support.
+  const count = progress.unmatchedWrong + 1;
+  return { ...keep, transferStreak: 0, unmatchedWrong: count, action: count >= UNMATCHED_BEFORE_SUPPORT ? 'show_explanation' : 'ask_transfer' };
 }
 
-function applyAction(state: LearnerState, family: FamilyId, action: NextAction, explained: Question): { state: LearnerState; action: NextAction } {
+function applyAction(state: LearnerState, family: FamilyId, action: NextAction): LearnerState {
   switch (action) {
     case 'ask_followup':
-      return { state: withQuestion(state, family, 'followup', 1), action };
+      return withQuestion(state, family, 'followup', 1);
     case 'ask_another_item':
-      return { state: withQuestion(state, family, 'item', 1), action };
+      return withQuestion(state, family, 'item', 1);
     case 'ask_transfer':
-      return { state: withQuestion(state, family, 'transfer', 1), action };
+      return withQuestion(state, family, 'transfer', 1);
     case 'ask_harder_transfer':
-      return { state: withQuestion(state, family, 'transfer', 2), action };
+      return withQuestion(state, family, 'transfer', 2);
     case 'show_explanation': {
-      const labelled = state.families[family].status === 'likely';
-      return { state: { ...state, step: { kind: 'explanation', question: explained, labelled } }, action };
+      // The explanation has been offered; new numbers check the idea once the learner chooses to continue.
+      const difficulty: Difficulty = state.families[family].status === 'improving' ? 2 : 1;
+      return withQuestion(state, family, 'transfer', difficulty);
     }
     case 'next_family': {
       const next = nextUnsecuredFamily(state, family);
-      if (next === null) return { state: { ...state, step: { kind: 'finished' } }, action: 'all_done' };
-      return { state: startFamily(state, next), action };
+      return next === null ? { ...state, step: { kind: 'finished' } } : startFamily(state, next);
     }
     case 'all_done':
     case 'retry_same':
-      return { state, action };
+      return state;
   }
 }
 
-/** Checks an answer for the current question and decides the next step. Makes no model calls. */
+/** The question or review currently on screen, with the support used so far. */
+function activeRun(state: LearnerState): { question: Question; run: Run } | null {
+  const step = state.step;
+  return step.kind === 'finished' ? null : { question: step.question, run: step.run };
+}
+
+function withRun(state: LearnerState, run: Run): LearnerState {
+  const step = state.step;
+  if (step.kind === 'finished') return state;
+  return { ...state, step: { ...step, run } };
+}
+
+/**
+ * Records that a hint was shown. Allowed on any question, so a learner who does not know how to begin never has to
+ * submit a wrong answer to get help. The answer that follows is not independent evidence.
+ */
+export function requestHint(state: LearnerState): LearnerState {
+  const active = activeRun(state);
+  if (active === null || active.run.hints >= MAX_HINTS) return state;
+  return withRun(state, { ...active.run, hints: active.run.hints + 1 });
+}
+
+/** Records that the worked solution was opened. Like a hint, it makes any later answer to this question assisted. */
+export function markSolutionViewed(state: LearnerState): LearnerState {
+  const active = activeRun(state);
+  if (active === null || active.run.solutionViewed) return state;
+  return withRun(state, { ...active.run, solutionViewed: true });
+}
+
+/** Goes back to the same question after a wrong answer. Nothing is replaced and no new evidence is added. */
+export function tryAgain(state: LearnerState): LearnerState {
+  if (state.step.kind !== 'review') return state;
+  return { ...state, step: { kind: 'question', question: state.step.question, run: state.step.run } };
+}
+
+/** The learner chose to move on after reviewing. Only now does the planned next question appear. */
+export function continueFromReview(state: LearnerState): LearnerState {
+  if (state.step.kind !== 'review') return state;
+  const { question, run } = state.step;
+  return applyAction(state, question.family, run.planned ?? 'ask_transfer');
+}
+
+/**
+ * When the engine itself decides support is needed (an idea matched twice, repeated unmatched answers, or repeated tries
+ * on one question) the explanation is shown straight away rather than only offered. Showing it counts as viewing it.
+ */
+function withAutoSupport(run: Run, outcome: AttemptRecord['outcome']): Run {
+  if (outcome === 'correct' || run.solutionViewed) return run;
+  return run.planned === 'show_explanation' || needsProactiveSupport(run) ? { ...run, solutionViewed: true } : run;
+}
+
+/** True once repeated wrong answers mean support should be shown rather than only offered. */
+export function needsProactiveSupport(run: Run): boolean {
+  return run.tries >= SUPPORT_AFTER_TRIES;
+}
+
+/**
+ * Checks an answer for the current question. A correct first answer moves straight on. Any other answer leaves the
+ * question on screen in a review step. Evidence rules:
+ *  - the first wrong answer is evidence (patterns, labels) exactly as before;
+ *  - later answers to the same question are recorded but never strengthen a label or a streak;
+ *  - only a first answer with no hint and no solution can count towards "secure".
+ * Makes no model calls.
+ */
 export function submitAnswer(state: LearnerState, answer: Answer, ctx: AnswerContext = {}): StepResult {
   if (state.step.kind !== 'question') throw new Error('No question is waiting for an answer');
-  const question = state.step.question;
+  const { question, run } = state.step;
   const family = question.family;
   const evaluation = FAMILIES[family].evaluate(question, answer);
   if (!evaluation.valid) {
@@ -239,8 +343,8 @@ export function submitAnswer(state: LearnerState, answer: Answer, ctx: AnswerCon
 
   const outcome = classify(evaluation.correct, evaluation.pattern);
   const progress = state.families[family];
-  const hintUsed = question.stage === 'transfer' && ctx.hintUsed === true;
-  const decision = decide(question.stage, outcome, progress, family, ctx);
+  const independent = isIndependent(run);
+  const helped = run.hints > 0 || run.solutionViewed;
   const attempt: AttemptRecord = {
     seq: state.counter,
     stage: question.stage,
@@ -248,27 +352,47 @@ export function submitAnswer(state: LearnerState, answer: Answer, ctx: AnswerCon
     answerDisplay: evaluation.display,
     outcome,
     pattern: evaluation.pattern,
-    hintUsed,
+    hintUsed: helped,
+    independent,
     reasonId: ctx.reasonId ?? null,
   };
+  const attempts = [...progress.attempts, attempt].slice(-MAX_ATTEMPTS_PER_FAMILY);
+  const review = (nextRun: Run, status: FamilyStatus): Step => ({
+    kind: 'review',
+    question,
+    run: nextRun,
+    answerDisplay: evaluation.display,
+    outcome,
+    pattern: evaluation.pattern,
+    labelled: status === 'likely',
+  });
+
+  if (run.tries > 0) {
+    // A repeat answer to the same question: kept as a record, but it is the same evidence, so no rule fires again.
+    const recorded: LearnerState = {
+      ...state,
+      counter: state.counter + 1,
+      families: { ...state.families, [family]: { ...progress, attempts } },
+    };
+    const nextRun = withAutoSupport({ ...run, tries: run.tries + 1 }, outcome);
+    return { state: { ...recorded, step: review(nextRun, progress.status) }, outcome, pattern: evaluation.pattern, action: nextRun.planned ?? 'ask_transfer' };
+  }
+
+  const decision = decide(question.stage, outcome, progress, family, ctx, independent);
   const updated: FamilyProgress = {
     status: decision.status,
     transferStreak: decision.transferStreak,
     unmatchedWrong: decision.unmatchedWrong,
-    hintsUsed: progress.hintsUsed + (hintUsed ? 1 : 0),
-    attempts: [...progress.attempts, attempt].slice(-MAX_ATTEMPTS_PER_FAMILY),
+    hintsUsed: progress.hintsUsed + (helped ? 1 : 0),
+    attempts,
   };
   const recorded: LearnerState = { ...state, counter: state.counter + 1, families: { ...state.families, [family]: updated } };
-  const next = applyAction(recorded, family, decision.action, question);
-  return { state: next.state, outcome, pattern: evaluation.pattern, action: next.action };
-}
-
-/** After the learner has stepped through an explanation, check the idea with new numbers. */
-export function continueAfterExplanation(state: LearnerState): LearnerState {
-  if (state.step.kind !== 'explanation') return state;
-  const family = state.step.question.family;
-  const difficulty: Difficulty = state.families[family].status === 'improving' ? 2 : 1;
-  return withQuestion(state, family, 'transfer', difficulty);
+  if (outcome === 'correct') {
+    const next = applyAction(recorded, family, decision.action);
+    return { state: next, outcome, pattern: evaluation.pattern, action: next.step.kind === 'finished' && decision.action === 'next_family' ? 'all_done' : decision.action };
+  }
+  const nextRun = withAutoSupport({ ...run, tries: 1, planned: decision.action }, outcome);
+  return { state: { ...recorded, step: review(nextRun, decision.status) }, outcome, pattern: evaluation.pattern, action: decision.action };
 }
 
 /** Count of families marked secure, for the "ideas mastered" path. */

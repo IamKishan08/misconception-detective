@@ -3,7 +3,7 @@ import helmet from 'helmet';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { ZodType } from 'zod';
-import { explainRequestSchema, interpretRequestSchema } from '../ai/schemas.js';
+import { askRequestSchema, explainRequestSchema, interpretRequestSchema } from '../ai/schemas.js';
 import type { AiService } from '../ai/service.js';
 import { rateLimit, type RateLimitOptions } from './rateLimit.js';
 
@@ -80,6 +80,12 @@ export function createApp(options: AppOptions) {
     const body = parseBody(explainRequestSchema, req, res);
     if (body === null) return;
     res.json(await options.ai.explain(body.family, body.templateId, body.hintLevel));
+  });
+
+  api.post('/ask', async (req, res) => {
+    const body = parseBody(askRequestSchema, req, res);
+    if (body === null) return;
+    res.json(await options.ai.ask(body.problem, body.question));
   });
 
   api.use((_req, res) => {

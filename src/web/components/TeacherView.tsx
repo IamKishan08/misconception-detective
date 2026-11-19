@@ -37,7 +37,7 @@ function EvidenceTable({ rows, caption }: { rows: readonly LearnerEvidence[]; ca
                   {row.observed.map((a) => (
                     <li key={a.seq}>
                       {m.stage(a.stage)}: {messages.questionSummary(a.question)} — {m.answered} {a.answerDisplay} ({m.outcome(a.outcome)}
-                      {a.hintUsed ? `, ${m.hintUsed}` : ''})
+                      {a.hintUsed ? `, ${m.hintUsed}` : a.independent ? '' : `, ${m.repeat}`})
                     </li>
                   ))}
                 </ul>
@@ -62,7 +62,8 @@ export function TeacherView({ state, showSamples, onToggleSamples }: Props) {
   return (
     <section aria-labelledby="teacher-heading">
       <h2 id="teacher-heading">{m.heading}</h2>
-      <p className="note">{m.deviceNote}</p>
+      <p className="note" role="note">{m.limits}</p>
+      <p className="muted">{m.deviceNote}</p>
       <label className="toggle">
         <input type="checkbox" checked={showSamples} onChange={(e) => onToggleSamples(e.target.checked)} />
         {m.showSamples}

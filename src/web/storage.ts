@@ -31,8 +31,17 @@ const attemptSchema = z.object({
   outcome: z.enum(['correct', 'possible_misconception', 'needs_more_evidence']),
   pattern: z.enum(['add_across', 'bigger_denominator', 'scale_one_part', 'additive_scaling', 'not_equivalent']).nullable(),
   hintUsed: z.boolean(),
+  // Older saved attempts had no such field; without help they were independent.
+  independent: z.boolean().optional(),
   reasonId: z.enum(['added_tops_bottoms', 'bigger_bottom_bigger', 'changed_one_number', 'counted_parts', 'not_sure']).nullable(),
 });
+const runSchema = z.object({
+  hints: z.number().int().min(0).max(5),
+  solutionViewed: z.boolean(),
+  tries: z.number().int().min(0),
+  planned: z.enum(['retry_same', 'ask_followup', 'show_explanation', 'ask_another_item', 'ask_transfer', 'ask_harder_transfer', 'next_family', 'all_done']).nullable(),
+});
+const blankRunValue = { hints: 0, solutionViewed: false, tries: 0, planned: null } as const;
 const progressSchema = z.object({
   status: z.enum(['not_started', 'checking', 'possible', 'likely', 'improving', 'secure']),
   attempts: z.array(attemptSchema).max(50),
@@ -47,16 +56,31 @@ const learnerSchema = z.object({
   activeFamily: familyId,
   families: z.object({ F1: progressSchema, F2: progressSchema, F3: progressSchema }),
   step: z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('question'), question: questionSchema }),
-    z.object({ kind: z.literal('explanation'), question: questionSchema, labelled: z.boolean() }),
+    z.object({ kind: z.literal('question'), question: questionSchema, run: runSchema.default(blankRunValue) }),
+    z.object({
+      kind: z.literal('review'),
+      question: questionSchema,
+      run: runSchema,
+      answerDisplay: z.string().max(40),
+      outcome: z.enum(['correct', 'possible_misconception', 'needs_more_evidence']),
+      pattern: z.enum(['add_across', 'bigger_denominator', 'scale_one_part', 'additive_scaling', 'not_equivalent']).nullable(),
+      labelled: z.boolean(),
+    }),
+    // Saved by an earlier version: restart that question rather than discard the learner's progress.
+    z.object({ kind: z.literal('explanation'), question: questionSchema, labelled: z.boolean() }).transform((old) => ({ kind: 'question' as const, question: old.question, run: blankRunValue })),
     z.object({ kind: z.literal('finished') }),
   ]),
 });
 
+export const THEME_CHOICES = ['system', 'light', 'dark'] as const;
+export type ThemeChoice = (typeof THEME_CHOICES)[number];
+
 export interface Settings {
   showSamples: boolean;
+  theme: ThemeChoice;
 }
-const settingsSchema = z.object({ showSamples: z.boolean() });
+const settingsSchema = z.object({ showSamples: z.boolean().default(false), theme: z.enum(THEME_CHOICES).default('system') });
+const DEFAULT_SETTINGS: Settings = { showSamples: false, theme: 'system' };
 
 function randomSeed(): number {
   const buf = new Uint32Array(1);
@@ -85,11 +109,21 @@ function writeJson(key: string, value: unknown): boolean {
 
 export function loadLearner(): LearnerState {
   const parsed = learnerSchema.safeParse(readJson(STORAGE_KEY));
-  if (parsed.success) return parsed.data;
+  if (parsed.success) return normaliseLearner(parsed.data);
   // Save a new learner straight away so a reload shows the same first question.
   const fresh = createLearner(randomSeed());
   saveLearner(fresh);
   return fresh;
+}
+
+type StoredLearner = z.infer<typeof learnerSchema>;
+
+function normaliseLearner(stored: StoredLearner): LearnerState {
+  const fix = (progress: StoredLearner['families']['F1']) => ({
+    ...progress,
+    attempts: progress.attempts.map((a) => ({ ...a, independent: a.independent ?? !a.hintUsed })),
+  });
+  return { ...stored, families: { F1: fix(stored.families.F1), F2: fix(stored.families.F2), F3: fix(stored.families.F3) } };
 }
 
 export function saveLearner(state: LearnerState): boolean {
@@ -107,9 +141,16 @@ export function resetLearner(): LearnerState {
 
 export function loadSettings(): Settings {
   const parsed = settingsSchema.safeParse(readJson(SETTINGS_KEY));
-  return parsed.success ? parsed.data : { showSamples: true };
+  return parsed.success ? parsed.data : DEFAULT_SETTINGS;
 }
 
 export function saveSettings(settings: Settings): void {
   writeJson(SETTINGS_KEY, settings);
+}
+
+/** "system" removes the attribute so the operating-system preference applies through CSS. */
+export function applyTheme(theme: ThemeChoice): void {
+  const root = document.documentElement;
+  if (theme === 'system') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', theme);
 }
