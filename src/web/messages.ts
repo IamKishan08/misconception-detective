@@ -63,11 +63,6 @@ const FAMILY_IDEAS: Record<FamilyId, string> = {
   F3: 'changing only one number, or adding instead of multiplying, when making an equal fraction',
 };
 
-const RETEACH: Record<FamilyId, string> = {
-  F1: 'Paper strips: fold one strip into halves and one into thirds, then re-fold both into sixths and count the shaded sixths together. Ask: can the total be smaller than one of the pieces?',
-  F2: 'Roti sharing: share one roti among 3 children and an equal roti among 6. Compare one share from each. Then order 1/2, 1/4, 1/8 on a number line.',
-  F3: 'Fold and re-fold: shade 1/2 of a strip, fold it again into quarters and eighths, and record each new name for the same shaded amount.',
-};
 
 const STATUS: Record<FamilyStatus, string> = {
   not_started: 'Not started',
@@ -118,7 +113,6 @@ function actionLine(action: NextAction): string {
 
 export const messages = {
   appName: 'Misconception Detective',
-  audience: 'Fractions practice for classes 5 to 8',
   tagline: 'Type a fractions problem and understand it step by step.',
   skipToContent: 'Skip to main content',
   nav: { solve: 'Solve my problem', practise: 'Practise', progress: 'My progress' },
@@ -127,8 +121,6 @@ export const messages = {
   explanationsOfflineDetail: 'The steps are calculated and checked by the app itself. AI help is not active.',
   theme: { label: 'Theme', system: 'System', light: 'Light', dark: 'Dark' },
   familyName: (f: FamilyId) => FAMILY_NAMES[f],
-  familyIdea: (f: FamilyId) => FAMILY_IDEAS[f],
-  reteach: (f: FamilyId) => RETEACH[f],
   status: (s: FamilyStatus) => STATUS[s],
   reason: (r: ReasonId) => REASONS[r],
   invalid: (r: InvalidReason) => INVALID[r],
@@ -175,23 +167,6 @@ export const messages = {
     if (answer.optionId === 'equal' || (b.type !== 'compare' && b.type !== 'equal_check')) return 'They are equal';
     if (b.type === 'equal_check') return answer.optionId === 'first' ? `${format(b.first)} is larger` : `${format(b.second)} is larger`;
     return format(answer.optionId === 'first' ? b.first : b.second);
-  },
-
-  /** Short one-line text of a question, for the teacher table. */
-  questionSummary(q: Question): string {
-    const b = q.body;
-    switch (b.type) {
-      case 'add':
-        return `${format(b.a)} + ${format(b.b)} = ?`;
-      case 'compare':
-        return `Larger: ${format(b.first)} or ${format(b.second)}?`;
-      case 'missing_numerator':
-        return `${format(b.known)} = ?/${b.targetDen}`;
-      case 'missing_denominator':
-        return `${format(b.known)} = ${b.targetNum}/?`;
-      case 'equal_check':
-        return `Is ${format(b.first)} equal to ${format(b.second)}?`;
-    }
   },
 
   feedback(outcome: Outcome, action: NextAction, family: FamilyId, display: string): { title: string; body: string } {
@@ -246,7 +221,6 @@ export const messages = {
     },
     aiTitle: (id: string) => TEMPLATE_TITLES[id] ?? 'Explanation',
     aiLoading: 'Loading a short explanation…',
-    sameIdeaNote: (family: FamilyId) => `Idea being practised: ${FAMILY_NAMES[family].toLowerCase()}.`,
   },
 
   solve: {
@@ -335,7 +309,6 @@ export const messages = {
   },
 
   controls: {
-    networkError: 'Could not reach the server. Showing the verified built-in explanation instead.',
     storageWarning: 'This browser is not saving progress (private mode or storage blocked). Everything still works for this visit.',
   },
 

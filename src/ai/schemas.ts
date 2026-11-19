@@ -16,9 +16,6 @@ export const explainRequestSchema = z.strictObject({
   hintLevel: z.number().int().min(0).max(2),
 });
 
-export type InterpretRequest = z.infer<typeof interpretRequestSchema>;
-export type ExplainRequest = z.infer<typeof explainRequestSchema>;
-
 export const modelInterpretationSchema = z.strictObject({
   family: z.enum(['F1', 'F2', 'F3', 'none']),
 });
@@ -66,7 +63,6 @@ export const askRequestSchema = z.strictObject({
   /** Possible mistakes the app itself found in the student's answer, so help about them can be selected. */
   causes: z.array(z.enum(CAUSE_IDS)).max(3).optional(),
 });
-export type AskRequest = z.infer<typeof askRequestSchema>;
 
 /**
  * What the model may return: an intent and identifiers, nothing else. Whether each identifier exists and applies to this

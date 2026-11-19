@@ -41,7 +41,3 @@ export function describeProblem(p: Problem): string {
         : `Find the missing bottom number (denominator) so that ${fmt(p.known)} = ${p.other}/?`;
   }
 }
-
-export function sameProblem(a: Problem, b: Problem): boolean {
-  return problemText(a) === problemText(b);
-}

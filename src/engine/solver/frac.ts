@@ -92,10 +92,6 @@ export function sign(a: Frac): -1 | 0 | 1 {
   return a.n === 0 ? 0 : a.n < 0 ? -1 : 1;
 }
 
-export function isProper(a: Frac): boolean {
-  return Math.abs(a.n) < a.d;
-}
-
 /** Plain text such as "3/4", "-1/2" or "5" (whole numbers have no bottom). ASCII minus so it can be parsed again. */
 export function fmt(a: Frac): string {
   return a.d === 1 ? String(a.n) : `${a.n}/${a.d}`;

@@ -10,6 +10,9 @@ Date: 2026-11-19. Everything below was run by the developer assistant in the env
 ## Environment
 Windows 11 Home, Node v24.22.2, npm, Chromium from Playwright, `@google/genai` 3.6.0. A separate restricted sandbox once passed 227 tests and blocked 39 API tests with `localhost EACCES`; that was an environment restriction. In this environment the API tests (supertest, local sockets) ran and passed, so that result is not evidence of an application defect and was not used to dismiss any failure.
 
+## Code-quality refactor (after `de57f32`)
+A behaviour-preserving refactor followed: `solve.ts` (670 lines) was split into `types`, `result`, `visuals`, `steps` and `solve`; `help.ts` (450 lines) into `helpTypes`, `concepts`, `builtInSelect` and `help`; the two near-identical missing-numerator / missing-denominator step builders were unified; unused code left over from earlier designs was removed (unused helpers and types, leftover teacher-view strings). No file in `src/engine/solver/` now exceeds 370 lines. Behaviour was checked by a differential test (not committed) that ran the previous `solve.ts` and `help.ts` from git against the new modules: **416,834 outputs across 31,355 problems (all four operations, comparisons both directions, every missing-number case, the 999 bounds, concept texts and the built-in matcher) were identical, 0 differences.** The same typecheck, lint, 360 unit tests, 28 browser tests (twice, under `CI=1`) and the strict live smoke test all passed again. The deployed service (revision `00004-qtr`) was **not** redeployed for this refactor, because its behaviour is unchanged; it was built from `de57f32`.
+
 ## Automated checks (local, on `de57f32`)
 | Check | Command | Result |
 |---|---|---|
